@@ -49,6 +49,7 @@ ensure_path() {
 write_wrapper() {
   local root="$1"
   mkdir -p "$BIN_DIR"
+  rm -f "$BIN_DIR/wtagent"
   cat > "$BIN_DIR/wtagent" <<EOF
 #!/bin/sh
 exec node "$root/dist/index.js" "\$@"
