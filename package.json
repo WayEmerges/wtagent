@@ -1,0 +1,38 @@
+{
+  "name": "wt-agent",
+  "version": "0.1.0",
+  "description": "Interactive TUI for locally hosted OpenAI-compatible models. Not affiliated with Anysphere or Cursor.",
+  "type": "module",
+  "bin": {
+    "wtagent": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "local-llm"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^15.0.0",
+    "fast-glob": "^3.3.3",
+    "ink": "^7.1.1",
+    "marked": "^18.0.9",
+    "openai": "^7.4.0",
+    "react": "^19.2.8",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.18",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}

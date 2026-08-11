@@ -1,0 +1,31 @@
+{
+  "defaultModel": "auto",
+  "auto": {
+    "orchestrator": "router",
+    "fallback": "main"
+  },
+  "models": {
+    "main": {
+      "name": "Local Main",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "local",
+      "model": "actual-upstream-model-id",
+      "contextLength": 32768,
+      "roles": ["chat", "agent"]
+    },
+    "router": {
+      "name": "Router",
+      "baseURL": "http://127.0.0.1:8081/v1",
+      "apiKey": "local",
+      "model": "small-router",
+      "roles": ["orchestrator"]
+    },
+    "coder": {
+      "name": "Coder",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "local",
+      "model": "coder-model",
+      "roles": ["agent", "code"]
+    }
+  }
+}
