@@ -6,17 +6,18 @@ import { useStore } from "../state/store.js";
 import { ModelPicker } from "./model-picker.js";
 import { SessionPicker } from "./session-picker.js";
 import { filterSlash, SlashPalette, SLASH_COMMANDS } from "./slash-palette.js";
-import { wrapWords } from "./wrap.js";
 
 const MIN_INNER_LINES = 3;
 const GLYPH = " → ";
 const CONT = "   ";
 const COMPOSER_BG = "#1f1f1f";
 
-function Caret() {
+type VisLine = { text: string; start: number };
+
+function Caret({ ch }: { ch: string }) {
   return (
     <Text backgroundColor="white" color="black">
-      {" "}
+      {ch.length > 0 ? ch : " "}
     </Text>
   );
 }
@@ -65,8 +66,119 @@ function Placeholder({ text, caret }: { text: string; caret: boolean }) {
   );
 }
 
-function wrapLines(text: string, innerWidth: number): string[] {
-  return wrapWords(text, innerWidth);
+/** Word-wrap with original-string offsets for cursor mapping. */
+function layoutLines(text: string, width: number): VisLine[] {
+  const w = Math.max(1, width);
+  if (text.length === 0) {
+    return [{ text: "", start: 0 }];
+  }
+  const out: VisLine[] = [];
+  const parts = text.split("\n");
+  let offset = 0;
+
+  for (let pi = 0; pi < parts.length; pi++) {
+    const para = parts[pi]!;
+    const paraStart = offset;
+
+    if (para.length === 0) {
+      out.push({ text: "", start: paraStart });
+    } else {
+      const words: { word: string; start: number }[] = [];
+      let i = 0;
+      while (i < para.length) {
+        while (i < para.length && para[i] === " ") {
+          i++;
+        }
+        if (i >= para.length) {
+          break;
+        }
+        const ws = i;
+        while (i < para.length && para[i] !== " ") {
+          i++;
+        }
+        words.push({ word: para.slice(ws, i), start: paraStart + ws });
+      }
+
+      let cur = "";
+      let curStart = paraStart;
+      for (let wi = 0; wi < words.length; wi++) {
+        const { word, start } = words[wi]!;
+        if (cur.length === 0) {
+          if (word.length > w) {
+            for (let c = 0; c < word.length; c += w) {
+              out.push({ text: word.slice(c, c + w), start: start + c });
+            }
+            cur = "";
+          } else {
+            cur = word;
+            curStart = start;
+          }
+          continue;
+        }
+        if (cur.length + 1 + word.length <= w) {
+          cur = `${cur} ${word}`;
+        } else {
+          out.push({ text: cur, start: curStart });
+          if (word.length > w) {
+            for (let c = 0; c < word.length; c += w) {
+              out.push({ text: word.slice(c, c + w), start: start + c });
+            }
+            cur = "";
+          } else {
+            cur = word;
+            curStart = start;
+          }
+        }
+      }
+      if (cur.length > 0 || words.length === 0) {
+        out.push({ text: cur, start: curStart });
+      }
+    }
+
+    offset += para.length;
+    if (pi < parts.length - 1) {
+      offset += 1;
+    }
+  }
+
+  return out.length > 0 ? out : [{ text: "", start: 0 }];
+}
+
+function lineIndexForCursor(lines: VisLine[], cursor: number, textLen: number): number {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const nextStart = i + 1 < lines.length ? lines[i + 1]!.start : textLen + 1;
+    if (cursor >= line.start && cursor < nextStart) {
+      return i;
+    }
+  }
+  return Math.max(0, lines.length - 1);
+}
+
+function clampCursor(n: number, len: number): number {
+  return Math.max(0, Math.min(len, n));
+}
+
+function wordLeft(text: string, cursor: number): number {
+  let i = cursor;
+  while (i > 0 && /\s/.test(text[i - 1]!)) {
+    i--;
+  }
+  while (i > 0 && !/\s/.test(text[i - 1]!)) {
+    i--;
+  }
+  return i;
+}
+
+function wordRight(text: string, cursor: number): number {
+  let i = cursor;
+  while (i < text.length && !/\s/.test(text[i]!)) {
+    i++;
+  }
+  while (i < text.length && /\s/.test(text[i]!)) {
+    i++;
+  }
+  return i;
 }
 
 export function Composer() {
@@ -74,6 +186,7 @@ export function Composer() {
   const { stdout } = useStdout();
   const focused = useTerminalFocus();
   const [value, setValue] = useState("");
+  const [cursor, setCursor] = useState(0);
   const width = stdout.columns;
   const boxWidth = Math.max(20, width - 4);
   const innerWidth = Math.max(8, boxWidth - 2 - GLYPH.length);
@@ -118,6 +231,11 @@ export function Composer() {
     setPaletteIndex(0);
   }, [value]);
 
+  function setDraft(next: string, nextCursor?: number) {
+    setValue(next);
+    setCursor(clampCursor(nextCursor ?? next.length, next.length));
+  }
+
   function remember(text: string) {
     setHistory((prev) => [...prev, text]);
     setHistoryIndex(null);
@@ -127,7 +245,7 @@ export function Composer() {
   function runSlash(line: string) {
     remember(line);
     useStore.getState().runCommand(line, exit);
-    setValue("");
+    setDraft("");
     setPaletteOpen(false);
   }
 
@@ -231,8 +349,41 @@ export function Composer() {
 
     const newline = (key.return && key.shift) || (key.ctrl && input === "j");
     if (newline) {
-      setValue(value + "\n");
+      const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
+      setDraft(next, cursor + 1);
       setHistoryIndex(null);
+      return;
+    }
+
+    if (key.leftArrow) {
+      setHistoryIndex(null);
+      if (key.ctrl || key.meta) {
+        setCursor(wordLeft(value, cursor));
+      } else {
+        setCursor((c) => Math.max(0, c - 1));
+      }
+      return;
+    }
+
+    if (key.rightArrow) {
+      setHistoryIndex(null);
+      if (key.ctrl || key.meta) {
+        setCursor(wordRight(value, cursor));
+      } else {
+        setCursor((c) => Math.min(value.length, c + 1));
+      }
+      return;
+    }
+
+    if (key.home) {
+      setHistoryIndex(null);
+      setCursor(0);
+      return;
+    }
+
+    if (key.end) {
+      setHistoryIndex(null);
+      setCursor(value.length);
       return;
     }
 
@@ -248,11 +399,11 @@ export function Composer() {
         setLiveDraft(value);
         const next = history.length - 1;
         setHistoryIndex(next);
-        setValue(history[next] ?? "");
+        setDraft(history[next] ?? "");
       } else if (historyIndex > 0) {
         const next = historyIndex - 1;
         setHistoryIndex(next);
-        setValue(history[next] ?? "");
+        setDraft(history[next] ?? "");
       }
       return;
     }
@@ -268,10 +419,10 @@ export function Composer() {
       if (historyIndex < history.length - 1) {
         const next = historyIndex + 1;
         setHistoryIndex(next);
-        setValue(history[next] ?? "");
+        setDraft(history[next] ?? "");
       } else {
         setHistoryIndex(null);
-        setValue(liveDraft);
+        setDraft(liveDraft);
       }
       return;
     }
@@ -295,22 +446,26 @@ export function Composer() {
       if (trimmed.length > 0) {
         remember(trimmed);
         useStore.getState().submitUser(trimmed);
-        setValue("");
+        setDraft("");
       }
       return;
     }
 
     if (key.backspace || key.delete) {
-      const next = value.slice(0, -1);
-      setValue(next);
+      if (key.delete) {
+        if (cursor >= value.length) {
+          return;
+        }
+        const next = value.slice(0, cursor) + value.slice(cursor + 1);
+        setDraft(next, cursor);
+      } else if (cursor > 0) {
+        const next = value.slice(0, cursor - 1) + value.slice(cursor);
+        setDraft(next, cursor - 1);
+      }
       setHistoryIndex(null);
-      if (next.length === 0) {
+      if (value.length <= 1) {
         setPaletteOpen(false);
       }
-      return;
-    }
-
-    if (key.leftArrow || key.rightArrow) {
       return;
     }
 
@@ -319,8 +474,8 @@ export function Composer() {
     }
 
     if (input) {
-      const next = value + input;
-      setValue(next);
+      const next = value.slice(0, cursor) + input + value.slice(cursor);
+      setDraft(next, cursor + input.length);
       setHistoryIndex(null);
       if (value.length === 0 && input === "/") {
         setPaletteOpen(true);
@@ -330,10 +485,17 @@ export function Composer() {
   });
 
   const showPlaceholder = value.length === 0;
-  const allLines = showPlaceholder ? [placeholder] : wrapLines(value, innerWidth);
-  const start = Math.max(0, allLines.length - MIN_INNER_LINES);
-  const visible = allLines.slice(start);
+  const allLines = showPlaceholder ? [{ text: placeholder, start: 0 }] : layoutLines(value, innerWidth);
+  const cursorLine = showPlaceholder ? 0 : lineIndexForCursor(allLines, cursor, value.length);
   const boxHeight = MIN_INNER_LINES;
+  let start = Math.max(0, allLines.length - boxHeight);
+  if (cursorLine < start) {
+    start = cursorLine;
+  }
+  if (cursorLine >= start + boxHeight) {
+    start = cursorLine - boxHeight + 1;
+  }
+  const visible = allLines.slice(start, start + boxHeight);
   const extra = boxHeight - visible.length;
   const padTop = Math.floor(extra / 2);
   const padBottom = extra - padTop;
@@ -366,19 +528,29 @@ export function Composer() {
         {visible.map((line, i) => {
           const abs = start + i;
           const glyph = abs === 0 ? GLYPH : CONT;
-          const isLast = i === visible.length - 1;
+          const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
+          const col = onCaretLine
+            ? Math.max(0, Math.min(line.text.length, cursor - line.start))
+            : -1;
+          const before = col >= 0 ? line.text.slice(0, col) : line.text;
+          const at = col >= 0 ? line.text.slice(col, col + 1) : "";
+          const after = col >= 0 ? line.text.slice(col + 1) : "";
+
           return (
             <Box key={`line-${abs}`} width={innerWidth + GLYPH.length} flexShrink={0}>
               <Box width={GLYPH.length} flexShrink={0}>
                 <Text>{glyph}</Text>
               </Box>
               {showPlaceholder ? (
-                <Placeholder text={line} caret={focused} />
+                <Placeholder text={line.text} caret={focused} />
+              ) : onCaretLine ? (
+                <Text wrap="truncate">
+                  {before}
+                  <Caret ch={at} />
+                  {after}
+                </Text>
               ) : (
-                <>
-                  <Text wrap="truncate">{line.length === 0 ? " " : line}</Text>
-                  {isLast && focused ? <Caret /> : null}
-                </>
+                <Text wrap="truncate">{line.text.length === 0 ? " " : line.text}</Text>
               )}
             </Box>
           );
