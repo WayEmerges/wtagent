@@ -40,6 +40,7 @@ export function Footer() {
   const { stdout } = useStdout();
   const mode = useStore((s) => s.mode);
   const modelKey = useStore((s) => s.modelKey);
+  const resolvedModelKey = useStore((s) => s.resolvedModelKey);
   const config = useStore((s) => s.config);
   const usage = useStore((s) => s.usage);
   const usageApprox = useStore((s) => s.usageApprox);
@@ -47,8 +48,10 @@ export function Footer() {
   const dir = basename(cwd);
   const branch = gitBranch(cwd);
   const modeColor = mode === "Plan" ? "yellow" : mode === "Ask" ? "blue" : undefined;
-  const entry = config.models[modelKey];
-  const upstream = entry?.model ?? modelKey;
+  const effectiveKey =
+    modelKey === "auto" && resolvedModelKey ? resolvedModelKey : modelKey;
+  const entry = config.models[effectiveKey];
+  const upstream = entry?.model ?? effectiveKey;
   const label = shortModelId(upstream);
   const ctx = entry?.contextLength;
   let tokenBit = "";
@@ -62,7 +65,16 @@ export function Footer() {
         : `${tilde}${formatCount(used)} tok`;
   }
 
-  const modelShown = stdout.columns < 90 ? label : `${modelKey} · ${label}`;
+  const modelShown =
+    modelKey === "auto"
+      ? resolvedModelKey
+        ? stdout.columns < 90
+          ? `auto→${resolvedModelKey}`
+          : `auto → ${resolvedModelKey} · ${label}`
+        : "auto"
+      : stdout.columns < 90
+        ? label
+        : `${modelKey} · ${label}`;
 
   return (
     <Box paddingLeft={3}>

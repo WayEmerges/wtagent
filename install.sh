@@ -120,6 +120,12 @@ if [ ! -f "$src/dist/index.js" ]; then
   echo "wtagent installer: build did not produce dist/index.js" >&2
   exit 1
 fi
+for req in dist/gpu/lease.js dist/orchestrator/route.js dist/memory/compact.js; do
+  if [ ! -f "$src/$req" ]; then
+    echo "wtagent installer: build missing $req (Phase I modules)" >&2
+    exit 1
+  fi
+done
 chmod +x "$src/dist/index.js"
 
 ver="$(node -p "require('$src/package.json').version" 2>/dev/null || echo 0.0.0)"

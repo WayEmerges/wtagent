@@ -14,6 +14,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/exit", summary: "Exit", implemented: true },
   { name: "/model", summary: "Pick model", implemented: true },
   { name: "/resume", summary: "Resume a session", implemented: true },
+  { name: "/compact", summary: "Summarize session into MEMORY.md", implemented: true },
   { name: "/copy", summary: "Copy last assistant message", implemented: false },
   { name: "/config", summary: "Show config path", implemented: true },
 ];

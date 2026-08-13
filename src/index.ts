@@ -4,18 +4,28 @@ import React from "react";
 import { Command } from "commander";
 import { App } from "./app.js";
 import { printListModels } from "./config/load.js";
+import { getGpuLease } from "./gpu/lease.js";
 import { friendlyLlmError, streamChat } from "./llm/stream.js";
+import { routeTurn } from "./orchestrator/route.js";
 import { printSessionList, workspaceKey } from "./sessions/store.js";
 import { useStore } from "./state/store.js";
 
 async function runPrint(prompt: string): Promise<void> {
   const { config, modelKey, mode } = useStore.getState();
-  const entry = config.models[modelKey];
+  let runKey = modelKey;
+  if (modelKey === "auto") {
+    const routed = await routeTurn({ config, mode, userText: prompt });
+    runKey = routed.modelKey;
+    console.error(`Auto → ${runKey} (${routed.reason})`);
+  }
+  const entry = config.models[runKey];
   if (!entry) {
-    console.error(`No model "${modelKey}". Check ~/.waytech-agent/config.json`);
+    console.error(`No model "${runKey}". Check ~/.waytech-agent/config.json`);
     process.exitCode = 1;
     return;
   }
+  const lease = getGpuLease(config);
+  const handle = await lease.acquire(runKey);
   try {
     await streamChat({
       baseURL: entry.baseURL,
@@ -36,6 +46,8 @@ async function runPrint(prompt: string): Promise<void> {
   } catch (err) {
     console.error(friendlyLlmError(err, entry.baseURL));
     process.exitCode = 1;
+  } finally {
+    await handle.release();
   }
 }
 

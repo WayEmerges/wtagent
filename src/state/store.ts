@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  autoEnabled,
   loadConfig,
   modelChoices,
   resolveModelKey,
@@ -8,6 +9,8 @@ import {
 } from "../config/load.js";
 import { friendlyLlmError, type TokenUsage } from "../llm/stream.js";
 import { runAgentTurn } from "../llm/turn.js";
+import { compactSession, summarizerModelKey } from "../memory/compact.js";
+import { routeTurn } from "../orchestrator/route.js";
 import {
   latestSession,
   listSessions,
@@ -51,6 +54,8 @@ export type SessionStore = {
   streamingId: string | null;
   config: LoadedConfig;
   modelKey: string;
+  /** Concrete model used for the active/last Auto-routed turn. */
+  resolvedModelKey: string | null;
   modelPickerOpen: boolean;
   sessionPickerOpen: boolean;
   sessionId: string;
@@ -89,6 +94,7 @@ export const useStore = create<SessionStore>((set, get) => ({
   streamingId: null,
   config: initialConfig,
   modelKey: resolveModelKey(initialConfig),
+  resolvedModelKey: null,
   modelPickerOpen: false,
   sessionPickerOpen: false,
   sessionId: newSessionId(),
@@ -119,6 +125,7 @@ export const useStore = create<SessionStore>((set, get) => ({
     set({
       streamingId: null,
       pendingShell: null,
+      resolvedModelKey: null,
       sessionId: newSessionId(),
       sessionCreatedAt: new Date().toISOString(),
       rows: [{ id: nextId(), kind: "notice", text: "New chat" }],
@@ -132,15 +139,6 @@ export const useStore = create<SessionStore>((set, get) => ({
     }
 
     const { config, modelKey, mode } = get();
-    const entry = config.models[modelKey];
-    if (!entry) {
-      get().addError(
-        config.missing
-          ? `No config at ${config.path}`
-          : `No model entry "${modelKey}" — pick one with /model`,
-      );
-      return;
-    }
 
     const userId = nextId();
     const asstId = nextId();
@@ -157,32 +155,93 @@ export const useStore = create<SessionStore>((set, get) => ({
       ],
     }));
 
-    void runAgentTurn({
-      config,
-      modelKey,
-      mode,
-      asstId,
-      signal,
-      hooks: {
-        getRows: () => get().rows,
-        patchRows: (fn) => {
-          set((s) => ({ rows: fn(s.rows) }));
-        },
-        setUsage: (usage, approx) => {
-          set({ usage, usageApprox: approx });
-        },
-        yolo: () => get().yolo,
-        setYolo: () => {
-          set({ yolo: true, pendingShell: null });
-        },
-        waitShell: (command) =>
-          new Promise<ShellDecision>((resolve) => {
-            shellWait = resolve;
-            set({ pendingShell: { command } });
-          }),
-      },
-    })
-      .then(() => {
+    void (async () => {
+      let runKey = modelKey;
+      if (modelKey === "auto") {
+        if (!autoEnabled(config)) {
+          set((s) => ({
+            streamingId: null,
+            rows: [
+              ...s.rows.filter((row) => row.id !== asstId && row.id !== userId),
+              {
+                id: nextId(),
+                kind: "error",
+                text: "Auto is disabled — set auto.fallback to a configured model",
+              },
+            ],
+          }));
+          return;
+        }
+        const routed = await routeTurn({ config, mode, userText: text, signal });
+        if (signal.aborted) {
+          return;
+        }
+        runKey = routed.modelKey;
+        set((s) => {
+          const asst = s.rows.find((r) => r.id === asstId);
+          const rest = s.rows.filter((r) => r.id !== asstId);
+          return {
+            resolvedModelKey: runKey,
+            rows: [
+              ...rest,
+              {
+                id: nextId(),
+                kind: "notice",
+                text: `Auto → ${runKey} (${routed.reason})`,
+              },
+              ...(asst ? [asst] : []),
+            ],
+          };
+        });
+      } else {
+        set({ resolvedModelKey: null });
+      }
+
+      const entry = config.models[runKey];
+      if (!entry) {
+        set((s) => ({
+          streamingId: null,
+          rows: [
+            ...s.rows.filter((row) => row.id !== asstId),
+            {
+              id: nextId(),
+              kind: "error",
+              text: config.missing
+                ? `No config at ${config.path}`
+                : `No model entry "${runKey}" — pick one with /model`,
+            },
+          ],
+        }));
+        return;
+      }
+
+      try {
+        await runAgentTurn({
+          config,
+          modelKey: runKey,
+          mode,
+          asstId,
+          sessionId: get().sessionId,
+          signal,
+          hooks: {
+            getRows: () => get().rows,
+            patchRows: (fn) => {
+              set((s) => ({ rows: fn(s.rows) }));
+            },
+            setUsage: (usage, approx) => {
+              set({ usage, usageApprox: approx });
+            },
+            yolo: () => get().yolo,
+            setYolo: () => {
+              set({ yolo: true, pendingShell: null });
+            },
+            waitShell: (command) =>
+              new Promise<ShellDecision>((resolve) => {
+                shellWait = resolve;
+                set({ pendingShell: { command } });
+              }),
+          },
+        });
         if (get().streamingId === asstId) {
           set({ streamingId: null, pendingShell: null });
         }
@@ -194,8 +253,7 @@ export const useStore = create<SessionStore>((set, get) => ({
           mode: s.mode,
           rows: s.rows,
         });
-      })
-      .catch((err: unknown) => {
+      } catch (err: unknown) {
         if (signal.aborted) {
           return;
         }
@@ -215,7 +273,8 @@ export const useStore = create<SessionStore>((set, get) => ({
           mode: s.mode,
           rows: s.rows,
         });
-      });
+      }
+    })();
   },
 
   cancelStream: () => {
@@ -251,6 +310,7 @@ export const useStore = create<SessionStore>((set, get) => ({
       rows: session.rows,
       mode: session.mode,
       modelKey: session.modelKey,
+      resolvedModelKey: null,
       streamingId: null,
       pendingShell: null,
       sessionPickerOpen: false,
@@ -279,8 +339,18 @@ export const useStore = create<SessionStore>((set, get) => ({
 
   selectModel: (key) => {
     if (key === "auto") {
-      get().addNotice("Auto is disabled until Phase I");
-      set({ modelPickerOpen: false });
+      if (!autoEnabled(get().config)) {
+        get().addNotice("Auto is disabled — set auto.fallback to a configured model");
+        set({ modelPickerOpen: false });
+        return;
+      }
+      try {
+        writeLastModel("auto");
+      } catch {
+        get().addNotice("Could not write ~/.waytech-agent/state.json");
+      }
+      set({ modelKey: "auto", resolvedModelKey: null, modelPickerOpen: false });
+      get().addNotice("Model: auto");
       return;
     }
     const entry = get().config.models[key];
@@ -294,7 +364,7 @@ export const useStore = create<SessionStore>((set, get) => ({
     } catch {
       get().addNotice("Could not write ~/.waytech-agent/state.json");
     }
-    set({ modelKey: key, modelPickerOpen: false });
+    set({ modelKey: key, resolvedModelKey: null, modelPickerOpen: false });
     get().addNotice(`Model: ${key} (${entry.name})`);
   },
 
@@ -303,7 +373,7 @@ export const useStore = create<SessionStore>((set, get) => ({
       return;
     }
     const key = resolveModelKey(get().config, flag);
-    set({ modelKey: key });
+    set({ modelKey: key, resolvedModelKey: null });
   },
 
   applyFlagYolo: (on) => {
@@ -372,14 +442,54 @@ export const useStore = create<SessionStore>((set, get) => ({
         get().openSessionPicker();
         return;
       case "/config": {
-        const { config, modelKey } = get();
-        const entry = config.models[modelKey];
+        const { config, modelKey, resolvedModelKey } = get();
+        const displayKey = modelKey === "auto" ? (resolvedModelKey ?? "auto") : modelKey;
+        const entry = config.models[displayKey];
         const lines = [
           `config: ${config.path}`,
-          `model: ${modelKey}`,
+          `model: ${modelKey}${modelKey === "auto" && resolvedModelKey ? ` → ${resolvedModelKey}` : ""}`,
           `baseURL: ${entry?.baseURL ?? "(none)"}`,
         ];
         get().addNotice(lines.join("\n"));
+        return;
+      }
+      case "/compact": {
+        if (get().streamingId) {
+          get().addNotice("Wait for the current turn to finish before /compact");
+          return;
+        }
+        const sumKey = summarizerModelKey(get().config);
+        if (!sumKey) {
+          get().addNotice("No summarizer model configured");
+          return;
+        }
+        void (async () => {
+          try {
+            const result = await compactSession({
+              config: get().config,
+              sessionId: get().sessionId,
+              rows: get().rows,
+              force: true,
+            });
+            if (!result) {
+              get().addNotice("Nothing to compact");
+              return;
+            }
+            set({
+              rows: [
+                ...result.trimmedRows,
+                {
+                  id: nextId(),
+                  kind: "notice",
+                  text: `Compacted session → ${result.memoryPath}`,
+                },
+              ],
+            });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            get().addError(`Compact failed: ${msg}`);
+          }
+        })();
         return;
       }
       default:

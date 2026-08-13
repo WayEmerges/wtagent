@@ -2,30 +2,54 @@
   "defaultModel": "auto",
   "auto": {
     "orchestrator": "router",
-    "fallback": "main"
+    "fallback": "brain",
+    "threshold": 0.75
+  },
+  "lease": {
+    "adapter": "noop",
+    "lockPath": "~/.waytech-agent/gpu.lock",
+    "acquireTimeoutMs": 600000
+  },
+  "memory": {
+    "enabled": true,
+    "dir": "~/.waytech-agent/memory",
+    "threshold": 0.75,
+    "keepRecentMessages": 0,
+    "summarizer": "summarizer",
+    "injectChars": 12000
   },
   "models": {
-    "main": {
-      "name": "Local Main",
-      "baseURL": "http://127.0.0.1:8080/v1",
-      "apiKey": "local",
-      "model": "actual-upstream-model-id",
-      "contextLength": 32768,
-      "roles": ["chat", "agent"]
-    },
     "router": {
       "name": "Router",
       "baseURL": "http://127.0.0.1:8081/v1",
       "apiKey": "local",
       "model": "small-router",
-      "roles": ["orchestrator"]
+      "roles": ["orchestrator"],
+      "contextLength": 8192
+    },
+    "brain": {
+      "name": "Brain",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "local",
+      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "roles": ["chat", "plan"],
+      "contextLength": 65536
     },
     "coder": {
       "name": "Coder",
       "baseURL": "http://127.0.0.1:8080/v1",
       "apiKey": "local",
-      "model": "coder-model",
-      "roles": ["agent", "code"]
+      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "roles": ["agent", "code"],
+      "contextLength": 65536
+    },
+    "summarizer": {
+      "name": "Summarizer",
+      "baseURL": "http://127.0.0.1:8080/v1",
+      "apiKey": "local",
+      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "roles": ["summarize"],
+      "contextLength": 65536
     }
   }
 }

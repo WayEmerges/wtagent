@@ -11,12 +11,43 @@ export type ModelEntry = {
   roles?: string[];
 };
 
+export type AutoConfig = {
+  orchestrator?: string;
+  fallback?: string;
+  /** Routing confidence / future use; default 0.75 */
+  threshold: number;
+};
+
+export type LeaseConfig = {
+  adapter: "noop" | "http";
+  lockPath: string;
+  acquireTimeoutMs: number;
+  /** Optional HTTP adapter hooks (unused by noop). */
+  http?: {
+    statusUrl?: string;
+    unloadUrl?: string;
+    loadUrl?: string;
+    setActiveUrl?: string;
+  };
+};
+
+export type MemoryConfig = {
+  enabled: boolean;
+  dir: string;
+  threshold: number;
+  keepRecentMessages: number;
+  summarizer?: string;
+  injectChars: number;
+};
+
 export type LoadedConfig = {
   path: string;
   missing: boolean;
   invalid?: string;
   defaultModel: string;
-  auto?: { orchestrator?: string; fallback?: string };
+  auto?: AutoConfig;
+  lease: LeaseConfig;
+  memory: MemoryConfig;
   models: Record<string, ModelEntry>;
   lastModel?: string;
 };
@@ -38,6 +69,16 @@ export function defaultConfigPath(): string {
 
 export function statePath(): string {
   return join(configDir(), "state.json");
+}
+
+function expandHome(p: string): string {
+  if (p === "~") {
+    return homedir();
+  }
+  if (p.startsWith("~/")) {
+    return join(homedir(), p.slice(2));
+  }
+  return p;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | undefined {
@@ -66,6 +107,107 @@ function parseModel(raw: unknown, key: string): ModelEntry | undefined {
   return { name, baseURL, apiKey, model, contextLength, roles };
 }
 
+function clampUnit(n: number, fallback: number): number {
+  if (!Number.isFinite(n) || n <= 0 || n > 1) {
+    return fallback;
+  }
+  return n;
+}
+
+function defaultLease(): LeaseConfig {
+  return {
+    adapter: "noop",
+    lockPath: join(configDir(), "gpu.lock"),
+    acquireTimeoutMs: 600_000,
+  };
+}
+
+function defaultMemory(models: Record<string, ModelEntry>, auto?: AutoConfig): MemoryConfig {
+  const summarizerKey =
+    models.summarizer !== undefined
+      ? "summarizer"
+      : auto?.fallback && models[auto.fallback]
+        ? auto.fallback
+        : undefined;
+  return {
+    enabled: summarizerKey !== undefined,
+    dir: join(configDir(), "memory"),
+    threshold: 0.75,
+    keepRecentMessages: 0,
+    summarizer: summarizerKey,
+    injectChars: 12_000,
+  };
+}
+
+function parseLease(raw: unknown): LeaseConfig {
+  const base = defaultLease();
+  const o = asRecord(raw);
+  if (!o) {
+    return base;
+  }
+  const adapter = o.adapter === "http" ? "http" : "noop";
+  const lockPath =
+    typeof o.lockPath === "string" && o.lockPath.length > 0
+      ? expandHome(o.lockPath)
+      : base.lockPath;
+  const acquireTimeoutMs =
+    typeof o.acquireTimeoutMs === "number" && o.acquireTimeoutMs > 0
+      ? o.acquireTimeoutMs
+      : base.acquireTimeoutMs;
+  const httpRaw = asRecord(o.http);
+  const http = httpRaw
+    ? {
+        statusUrl: typeof httpRaw.statusUrl === "string" ? httpRaw.statusUrl : undefined,
+        unloadUrl: typeof httpRaw.unloadUrl === "string" ? httpRaw.unloadUrl : undefined,
+        loadUrl: typeof httpRaw.loadUrl === "string" ? httpRaw.loadUrl : undefined,
+        setActiveUrl: typeof httpRaw.setActiveUrl === "string" ? httpRaw.setActiveUrl : undefined,
+      }
+    : undefined;
+  return { adapter, lockPath, acquireTimeoutMs, http };
+}
+
+function parseMemory(
+  raw: unknown,
+  models: Record<string, ModelEntry>,
+  auto?: AutoConfig,
+): MemoryConfig {
+  const base = defaultMemory(models, auto);
+  const o = asRecord(raw);
+  if (!o) {
+    return base;
+  }
+  const summarizer =
+    typeof o.summarizer === "string" && o.summarizer.length > 0
+      ? o.summarizer
+      : base.summarizer;
+  // Prefer explicit enabled; otherwise enable when summarizer or auto.fallback exists.
+  const enabled =
+    typeof o.enabled === "boolean"
+      ? o.enabled
+      : Boolean(
+          (summarizer && models[summarizer]) ||
+            (auto?.fallback && models[auto.fallback]),
+        );
+
+  return {
+    enabled,
+    dir: typeof o.dir === "string" && o.dir.length > 0 ? expandHome(o.dir) : base.dir,
+    threshold:
+      typeof o.threshold === "number" ? clampUnit(o.threshold, base.threshold) : base.threshold,
+    keepRecentMessages:
+      typeof o.keepRecentMessages === "number" &&
+      Number.isFinite(o.keepRecentMessages) &&
+      o.keepRecentMessages >= 0
+        ? Math.floor(o.keepRecentMessages)
+        : base.keepRecentMessages,
+    summarizer,
+    injectChars:
+      typeof o.injectChars === "number" && o.injectChars > 0
+        ? Math.floor(o.injectChars)
+        : base.injectChars,
+  };
+}
+
 function readLastModel(): string | undefined {
   try {
     const raw = JSON.parse(readFileSync(statePath(), "utf8")) as unknown;
@@ -89,17 +231,27 @@ export function writeLastModel(key: string): void {
   writeFileSync(statePath(), `${JSON.stringify(prev, null, 2)}\n`, "utf8");
 }
 
+function emptyConfig(path: string, lastModel?: string, invalid?: string): LoadedConfig {
+  return {
+    path,
+    missing: !invalid,
+    invalid,
+    defaultModel: "auto",
+    lease: defaultLease(),
+    memory: defaultMemory({}),
+    models: {},
+    lastModel,
+  };
+}
+
 export function loadConfig(): LoadedConfig {
   const path = defaultConfigPath();
   const lastModel = readLastModel();
 
   if (!existsSync(path)) {
     return {
-      path,
+      ...emptyConfig(path, lastModel),
       missing: true,
-      defaultModel: "auto",
-      models: {},
-      lastModel,
     };
   }
 
@@ -107,26 +259,12 @@ export function loadConfig(): LoadedConfig {
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
   } catch (err) {
-    return {
-      path,
-      missing: false,
-      invalid: err instanceof Error ? err.message : "invalid JSON",
-      defaultModel: "auto",
-      models: {},
-      lastModel,
-    };
+    return emptyConfig(path, lastModel, err instanceof Error ? err.message : "invalid JSON");
   }
 
   const root = asRecord(parsed);
   if (!root) {
-    return {
-      path,
-      missing: false,
-      invalid: "config root must be an object",
-      defaultModel: "auto",
-      models: {},
-      lastModel,
-    };
+    return emptyConfig(path, lastModel, "config root must be an object");
   }
 
   const modelsRaw = asRecord(root.models) ?? {};
@@ -143,10 +281,16 @@ export function loadConfig(): LoadedConfig {
     ? {
         orchestrator: typeof autoRaw.orchestrator === "string" ? autoRaw.orchestrator : undefined,
         fallback: typeof autoRaw.fallback === "string" ? autoRaw.fallback : undefined,
+        threshold:
+          typeof autoRaw.threshold === "number"
+            ? clampUnit(autoRaw.threshold, 0.75)
+            : 0.75,
       }
     : undefined;
 
   const defaultModel = typeof root.defaultModel === "string" ? root.defaultModel : "auto";
+  const lease = parseLease(root.lease);
+  const memory = parseMemory(root.memory, models, auto);
 
   const envBase = process.env.WTAGENT_BASE_URL?.trim();
   const envKey = process.env.WTAGENT_API_KEY?.trim();
@@ -154,9 +298,7 @@ export function loadConfig(): LoadedConfig {
 
   if (envBase || envKey || envModel) {
     const targetKey =
-      envModel && models[envModel]
-        ? envModel
-        : Object.keys(models)[0];
+      envModel && models[envModel] ? envModel : Object.keys(models)[0];
     if (targetKey && models[targetKey]) {
       const cur = models[targetKey];
       models[targetKey] = {
@@ -173,16 +315,22 @@ export function loadConfig(): LoadedConfig {
     missing: false,
     defaultModel,
     auto,
+    lease,
+    memory,
     models,
     lastModel,
   };
+}
+
+export function autoEnabled(config: LoadedConfig): boolean {
+  return Boolean(config.auto?.fallback && config.models[config.auto.fallback]);
 }
 
 export function modelChoices(config: LoadedConfig): ModelChoice[] {
   const auto: ModelChoice = {
     key: "auto",
     label: "Auto",
-    disabled: true,
+    disabled: !autoEnabled(config),
   };
   const rest: ModelChoice[] = Object.entries(config.models).map(([key, m]) => ({
     key,
@@ -196,7 +344,13 @@ export function resolveModelKey(config: LoadedConfig, flag?: string): string {
   const envModel = process.env.WTAGENT_MODEL?.trim();
   const candidates = [flag, envModel, config.lastModel, config.defaultModel, Object.keys(config.models)[0]];
   for (const c of candidates) {
-    if (!c || c === "auto") {
+    if (!c) {
+      continue;
+    }
+    if (c === "auto") {
+      if (autoEnabled(config)) {
+        return "auto";
+      }
       continue;
     }
     if (config.models[c]) {
@@ -219,7 +373,11 @@ export function printListModels(): void {
     console.log(`Invalid config at ${config.path}: ${config.invalid}`);
     return;
   }
-  console.log("auto\tAuto\t(disabled until Phase I)");
+  if (autoEnabled(config)) {
+    console.log(`auto\tAuto\t(fallback: ${config.auto?.fallback})`);
+  } else {
+    console.log("auto\tAuto\t(disabled — set auto.fallback to a configured model)");
+  }
   for (const [key, m] of Object.entries(config.models)) {
     console.log(`${key}\t${m.name}\t${m.baseURL}`);
   }

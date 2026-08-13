@@ -1,15 +1,24 @@
 {
   "name": "wt-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Interactive TUI for locally hosted OpenAI-compatible models. Not affiliated with Anysphere or Cursor.",
   "type": "module",
   "bin": {
     "wtagent": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "config.json.example",
+    "install.sh",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "smoke": "npm run build && node dist/index.js --list-models && node dist/index.js --help >/dev/null"
   },
   "engines": {
     "node": ">=22"
