@@ -57,14 +57,56 @@ EOF
   chmod +x "$BIN_DIR/wtagent"
 }
 
+# Seed or merge ~/.waytech-agent/config.json from the shipped example.
+# Never overwrite existing baseURL/apiKey values — only fill missing keys
+# (brain / coder / summarizer / auto / lease / memory) so schema updates
+# land on other machines while real IPs stay local.
 seed_config() {
   mkdir -p "$CONFIG_DIR"
-  if [ ! -f "$CONFIG_DIR/config.json" ]; then
-    if [ -f "$1/config.json.example" ]; then
-      cp "$1/config.json.example" "$CONFIG_DIR/config.json"
-      echo "Wrote $CONFIG_DIR/config.json — edit baseURL and model for your server."
-    fi
+  local example="$1/config.json.example"
+  local dest="$CONFIG_DIR/config.json"
+  if [ ! -f "$example" ]; then
+    return 0
   fi
+  if [ ! -f "$dest" ]; then
+    cp "$example" "$dest"
+    echo "Wrote $dest — replace YOUR_HOST in baseURL with your server."
+    return 0
+  fi
+  node -e '
+const fs = require("fs");
+const dest = process.argv[1];
+const examplePath = process.argv[2];
+let cur;
+try {
+  cur = JSON.parse(fs.readFileSync(dest, "utf8"));
+} catch {
+  process.exit(0);
+}
+const ex = JSON.parse(fs.readFileSync(examplePath, "utf8"));
+let changed = false;
+function isPlain(o) {
+  return o !== null && typeof o === "object" && !Array.isArray(o);
+}
+function mergeMissing(target, source) {
+  if (!isPlain(target) || !isPlain(source)) return;
+  for (const [k, v] of Object.entries(source)) {
+    if (!(k in target)) {
+      target[k] = v;
+      changed = true;
+      continue;
+    }
+    if (isPlain(target[k]) && isPlain(v)) {
+      mergeMissing(target[k], v);
+    }
+  }
+}
+mergeMissing(cur, ex);
+if (changed) {
+  fs.writeFileSync(dest, JSON.stringify(cur, null, 2) + "\n");
+  console.log("Merged missing keys into " + dest + " (existing baseURL values kept).");
+}
+' "$dest" "$example"
 }
 
 echo "Installing wtagent…"

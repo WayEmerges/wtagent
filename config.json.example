@@ -1,7 +1,6 @@
 {
   "defaultModel": "auto",
   "auto": {
-    "orchestrator": "router",
     "fallback": "brain",
     "threshold": 0.75
   },
@@ -19,37 +18,29 @@
     "injectChars": 12000
   },
   "models": {
-    "router": {
-      "name": "Router",
-      "baseURL": "http://127.0.0.1:8081/v1",
-      "apiKey": "local",
-      "model": "small-router",
-      "roles": ["orchestrator"],
-      "contextLength": 8192
-    },
     "brain": {
       "name": "Brain",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-      "roles": ["chat", "plan"],
-      "contextLength": 65536
+      "contextLength": 32768,
+      "roles": ["chat", "plan"]
     },
     "coder": {
       "name": "Coder",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-      "roles": ["agent", "code"],
-      "contextLength": 65536
+      "contextLength": 32768,
+      "roles": ["agent", "code"]
     },
     "summarizer": {
       "name": "Summarizer",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
-      "roles": ["summarize"],
-      "contextLength": 65536
+      "contextLength": 32768,
+      "roles": ["summarize"]
     }
   }
 }

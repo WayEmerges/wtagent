@@ -19,7 +19,7 @@ On this machine or any other:
 curl -fsSL https://raw.githubusercontent.com/WayEmerges/wtagent/main/install.sh | bash
 ```
 
-That installs into `~/.local/share/wtagent`, puts `wtagent` on `~/.local/bin`, and creates `~/.waytech-agent/config.json` if you do not already have one. Edit that config with **your** server `baseURL` and model id.
+That installs into `~/.local/share/wtagent`, puts `wtagent` on `~/.local/bin`, and seeds `~/.waytech-agent/config.json` from `config.json.example` (placeholder `YOUR_HOST` baseURLs). Reinstalls merge any *missing* keys (e.g. `brain` / `coder` / `summarizer` / `auto`) into an existing config without overwriting your real `baseURL` values. Replace `YOUR_HOST` with your server.
 
 From a local checkout:
 
@@ -96,7 +96,6 @@ See `config.json.example`. Shape:
 {
   "defaultModel": "auto",
   "auto": {
-    "orchestrator": "router",
     "fallback": "brain",
     "threshold": 0.75
   },
@@ -116,33 +115,33 @@ See `config.json.example`. Shape:
   "models": {
     "brain": {
       "name": "Brain",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
       "roles": ["chat", "plan"],
-      "contextLength": 65536
+      "contextLength": 32768
     },
     "coder": {
       "name": "Coder",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
       "roles": ["agent", "code"],
-      "contextLength": 65536
+      "contextLength": 32768
     },
     "summarizer": {
       "name": "Summarizer",
-      "baseURL": "http://127.0.0.1:8080/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
       "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
       "roles": ["summarize"],
-      "contextLength": 65536
+      "contextLength": 32768
     }
   }
 }
 ```
 
-`brain`, `coder`, and `summarizer` may share the same upstream model id. Replace `baseURL` / `model` with **your** server values. Design notes: `docs/PHASE-I-IMPLEMENTATION.md`.
+`brain`, `coder`, and `summarizer` may share the same upstream model id. Replace `YOUR_HOST` (and model id if needed) with **your** server values. Design notes: `docs/PHASE-I-IMPLEMENTATION.md`.
 
 ## License
 
