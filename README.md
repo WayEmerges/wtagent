@@ -74,6 +74,20 @@ When estimated prompt tokens reach `contextLength × memory.threshold` (default 
 
 Force with `/compact`. Set a low `contextLength` or `memory.threshold` to test.
 
+### Skills (prompt packs)
+
+Toggleable instruction packs injected into the system prompt. Bundled **caveman** = terse replies.
+
+```text
+/skill list
+/caveman          # on (full)
+/caveman lite|full|ultra
+/caveman off
+/skill on <id>
+```
+
+Add your own: `~/.waytech-agent/skills/<id>.md` then `/skill on <id>`. Active skills persist in `~/.waytech-agent/state.json`.
+
 ## Config example
 
 See `config.json.example`. Shape:

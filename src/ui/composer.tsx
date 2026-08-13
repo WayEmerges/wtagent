@@ -124,9 +124,9 @@ export function Composer() {
     setLiveDraft("");
   }
 
-  function runSlash(name: string) {
-    remember(name);
-    useStore.getState().runCommand(name, exit);
+  function runSlash(line: string) {
+    remember(line);
+    useStore.getState().runCommand(line, exit);
     setValue("");
     setPaletteOpen(false);
   }
@@ -288,7 +288,8 @@ export function Composer() {
       if (trimmed.startsWith("/")) {
         const token = trimmed.split(/\s/)[0] ?? trimmed;
         const known = SLASH_COMMANDS.find((c) => c.name === token);
-        runSlash(known?.name ?? token);
+        // Keep args for commands like `/caveman full` or `/skill list`
+        runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
         return;
       }
       if (trimmed.length > 0) {

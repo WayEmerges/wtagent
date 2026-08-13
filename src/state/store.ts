@@ -12,6 +12,11 @@ import { runAgentTurn } from "../llm/turn.js";
 import { compactSession, summarizerModelKey } from "../memory/compact.js";
 import { routeTurn } from "../orchestrator/route.js";
 import {
+  ensureUserSkills,
+  handleSkillsCommand,
+  readSkillState,
+} from "../skills/load.js";
+import {
   latestSession,
   listSessions,
   newSessionId,
@@ -47,6 +52,7 @@ function abortTurn() {
 }
 
 const initialConfig = loadConfig();
+ensureUserSkills();
 
 export type SessionStore = {
   rows: TranscriptRow[];
@@ -411,8 +417,10 @@ export const useStore = create<SessionStore>((set, get) => ({
     return text;
   },
 
-  runCommand: (name, exit) => {
-    switch (name) {
+  runCommand: (line, exit) => {
+    const trimmed = line.trim();
+    const token = (trimmed.split(/\s/)[0] ?? "").toLowerCase();
+    switch (token) {
       case "/quit":
       case "/exit":
         abortTurn();
@@ -445,10 +453,12 @@ export const useStore = create<SessionStore>((set, get) => ({
         const { config, modelKey, resolvedModelKey } = get();
         const displayKey = modelKey === "auto" ? (resolvedModelKey ?? "auto") : modelKey;
         const entry = config.models[displayKey];
+        const skills = readSkillState();
         const lines = [
           `config: ${config.path}`,
           `model: ${modelKey}${modelKey === "auto" && resolvedModelKey ? ` → ${resolvedModelKey}` : ""}`,
           `baseURL: ${entry?.baseURL ?? "(none)"}`,
+          `skills: ${skills.active.length ? skills.active.join(", ") : "(none)"}`,
         ];
         get().addNotice(lines.join("\n"));
         return;
@@ -492,8 +502,18 @@ export const useStore = create<SessionStore>((set, get) => ({
         })();
         return;
       }
+      case "/skill":
+      case "/skills":
+      case "/caveman":
+        try {
+          get().addNotice(handleSkillsCommand(trimmed));
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          get().addError(msg);
+        }
+        return;
       default:
-        get().addNotice(`${name} is not implemented`);
+        get().addNotice(`${token || trimmed} is not implemented`);
     }
   },
 }));

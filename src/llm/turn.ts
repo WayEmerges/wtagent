@@ -6,6 +6,7 @@ import {
   memoryInjectBlock,
   shouldCompact,
 } from "../memory/compact.js";
+import { buildSkillsInject } from "../skills/load.js";
 import type { AgentMode } from "../state/session.js";
 import { executeTool } from "../tools/run.js";
 import type { TranscriptRow } from "../ui/rows.js";
@@ -31,7 +32,12 @@ function nextId(): string {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function systemPrompt(mode: AgentMode, xml: boolean, memoryDigest: string): string {
+function systemPrompt(
+  mode: AgentMode,
+  xml: boolean,
+  memoryDigest: string,
+  skillsDigest: string,
+): string {
   const lines = [
     `You are a coding assistant. Working directory: ${process.cwd()}. Mode: ${mode}.`,
     "Use Markdown: headings, lists, fenced code.",
@@ -44,10 +50,13 @@ function systemPrompt(mode: AgentMode, xml: boolean, memoryDigest: string): stri
   } else {
     lines.push("Call tools when you need the workspace. Prefer list_dir or glob to list files.");
   }
+  if (skillsDigest.trim().length > 0) {
+    lines.push(skillsDigest);
+  }
   if (memoryDigest.trim().length > 0) {
     lines.push(`Persistent memory from prior sessions:\n${memoryDigest}`);
   }
-  return lines.join(" ");
+  return lines.join("\n\n");
 }
 
 function historyMessages(
@@ -55,8 +64,11 @@ function historyMessages(
   mode: AgentMode,
   xml: boolean,
   memoryDigest: string,
+  skillsDigest: string,
 ): ChatMessage[] {
-  const out: ChatMessage[] = [{ role: "system", content: systemPrompt(mode, xml, memoryDigest) }];
+  const out: ChatMessage[] = [
+    { role: "system", content: systemPrompt(mode, xml, memoryDigest, skillsDigest) },
+  ];
   for (const row of rows) {
     if (row.kind === "user") {
       out.push({ role: "user", content: row.text });
@@ -137,10 +149,11 @@ async function runAgentTurnLocked(
   leaseCtl: LeaseControl,
 ): Promise<void> {
   let memoryDigest = memoryInjectBlock(args.config);
+  let skillsDigest = buildSkillsInject();
   let compactedThisTurn = false;
 
   const rebuildMessages = (xml: boolean): ChatMessage[] =>
-    historyMessages(args.hooks.getRows(), args.mode, xml, memoryDigest);
+    historyMessages(args.hooks.getRows(), args.mode, xml, memoryDigest, skillsDigest);
 
   const estimatePrompt = (messages: ChatMessage[]): number =>
     messages.reduce((n, m) => n + estimateTokens(m.content), 0);
@@ -167,6 +180,7 @@ async function runAgentTurnLocked(
       }
       compactedThisTurn = true;
       memoryDigest = memoryInjectBlock(args.config);
+      skillsDigest = buildSkillsInject();
       args.hooks.patchRows(() => [
         ...result.trimmedRows.filter((r) => r.id !== args.asstId),
         {
@@ -223,7 +237,10 @@ async function runAgentTurnLocked(
     }
     const useXml = xmlByServer.get(entry.baseURL) === true;
     if (useXml && messages[0]) {
-      messages[0] = { role: "system", content: systemPrompt(args.mode, true, memoryDigest) };
+      messages[0] = {
+        role: "system",
+        content: systemPrompt(args.mode, true, memoryDigest, skillsDigest),
+      };
     }
 
     // Mid-loop watchdog (after tool results grow the prompt)

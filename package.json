@@ -1,6 +1,6 @@
 {
   "name": "wt-agent",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Interactive TUI for locally hosted OpenAI-compatible models. Not affiliated with Anysphere or Cursor.",
   "type": "module",
   "bin": {
@@ -12,7 +12,8 @@
     "install.sh",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "skills"
   ],
   "scripts": {
     "dev": "tsx watch src/index.ts",

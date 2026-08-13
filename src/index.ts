@@ -7,10 +7,12 @@ import { printListModels } from "./config/load.js";
 import { getGpuLease } from "./gpu/lease.js";
 import { friendlyLlmError, streamChat } from "./llm/stream.js";
 import { routeTurn } from "./orchestrator/route.js";
+import { buildSkillsInject, ensureUserSkills } from "./skills/load.js";
 import { printSessionList, workspaceKey } from "./sessions/store.js";
 import { useStore } from "./state/store.js";
 
 async function runPrint(prompt: string): Promise<void> {
+  ensureUserSkills();
   const { config, modelKey, mode } = useStore.getState();
   let runKey = modelKey;
   if (modelKey === "auto") {
@@ -24,6 +26,13 @@ async function runPrint(prompt: string): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const skills = buildSkillsInject();
+  const system = [
+    `You are a short helpful assistant. Working directory: ${process.cwd()}. Mode: ${mode}.`,
+    skills,
+  ]
+    .filter((s) => s.trim().length > 0)
+    .join("\n\n");
   const lease = getGpuLease(config);
   const handle = await lease.acquire(runKey);
   try {
@@ -32,10 +41,7 @@ async function runPrint(prompt: string): Promise<void> {
       apiKey: entry.apiKey,
       model: entry.model,
       messages: [
-        {
-          role: "system",
-          content: `You are a short helpful assistant. Working directory: ${process.cwd()}. Mode: ${mode}.`,
-        },
+        { role: "system", content: system },
         { role: "user", content: prompt },
       ],
       onDelta: (chunk) => {
