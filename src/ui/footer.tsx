@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process";
 import { basename } from "node:path";
 import { Box, Text, useStdout } from "ink";
+import { memo, useMemo } from "react";
 import { useStore } from "../state/store.js";
 import type { AgentMode } from "../state/session.js";
 
@@ -36,7 +37,7 @@ function formatCount(n: number): string {
   return String(n);
 }
 
-export function Footer() {
+export const Footer = memo(function Footer() {
   const { stdout } = useStdout();
   const mode = useStore((s) => s.mode);
   const modelKey = useStore((s) => s.modelKey);
@@ -46,7 +47,7 @@ export function Footer() {
   const usageApprox = useStore((s) => s.usageApprox);
   const cwd = process.cwd();
   const dir = basename(cwd);
-  const branch = gitBranch(cwd);
+  const branch = useMemo(() => gitBranch(cwd), [cwd]);
   const modeColor = mode === "Plan" ? "yellow" : mode === "Ask" ? "blue" : undefined;
   const effectiveKey =
     modelKey === "auto" && resolvedModelKey ? resolvedModelKey : modelKey;
@@ -89,4 +90,4 @@ export function Footer() {
       </Text>
     </Box>
   );
-}
+});

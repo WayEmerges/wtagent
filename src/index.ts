@@ -11,6 +11,15 @@ import { buildSkillsInject, ensureUserSkills } from "./skills/load.js";
 import { printSessionList, workspaceKey } from "./sessions/store.js";
 import { useStore } from "./state/store.js";
 
+const inkOptions = {
+  alternateScreen: false,
+  patchConsole: true,
+  exitOnCtrlC: false,
+  incrementalRendering: true,
+  maxFps: 120,
+  kittyKeyboard: { mode: "disabled" as const },
+};
+
 async function runPrint(prompt: string): Promise<void> {
   ensureUserSkills();
   const { config, modelKey, mode } = useStore.getState();
@@ -106,11 +115,7 @@ program
       if (prompt) {
         useStore.getState().setInitialPrompt(prompt);
       }
-      render(React.createElement(App), {
-        alternateScreen: false,
-        patchConsole: true,
-        kittyKeyboard: { mode: "disabled" },
-      });
+      render(React.createElement(App), inkOptions);
     },
   );
 
@@ -127,11 +132,7 @@ program
       process.exitCode = 1;
       return;
     }
-    render(React.createElement(App), {
-      alternateScreen: false,
-      patchConsole: true,
-      kittyKeyboard: { mode: "disabled" },
-    });
+    render(React.createElement(App), inkOptions);
   });
 
 program

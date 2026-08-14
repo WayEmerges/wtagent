@@ -17,7 +17,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/compact", summary: "Summarize session into MEMORY.md", implemented: true },
   { name: "/skill", summary: "List/toggle prompt skills", implemented: true },
   { name: "/caveman", summary: "Terse mode on/off/lite/full/ultra", implemented: true },
-  { name: "/copy", summary: "Copy last assistant message", implemented: false },
+  { name: "/copy", summary: "Copy last assistant message", implemented: true },
   { name: "/config", summary: "Show config path", implemented: true },
 ];
 

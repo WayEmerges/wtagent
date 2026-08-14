@@ -24,6 +24,7 @@ import {
   readSession,
   type SavedSession,
 } from "../sessions/store.js";
+import { copyText } from "../ui/clipboard.js";
 import type { TranscriptRow } from "../ui/rows.js";
 import { SLASH_COMMANDS } from "../ui/slash-palette.js";
 import { AGENT_MODES, type AgentMode } from "./session.js";
@@ -500,6 +501,19 @@ export const useStore = create<SessionStore>((set, get) => ({
             get().addError(`Compact failed: ${msg}`);
           }
         })();
+        return;
+      }
+      case "/copy": {
+        const last = [...get().rows].reverse().find((row) => row.kind === "assistant" && row.text.trim().length > 0);
+        if (!last || last.kind !== "assistant") {
+          get().addNotice("Nothing to copy");
+          return;
+        }
+        if (copyText(last.text)) {
+          get().addNotice("Copied last assistant message");
+        } else {
+          get().addNotice("Clipboard unavailable (need wl-copy, xclip, xsel, or pbcopy)");
+        }
         return;
       }
       case "/skill":

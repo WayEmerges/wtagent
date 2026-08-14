@@ -1,8 +1,28 @@
-import { Box, Text, useApp, useInput, useStdin, useStdout } from "ink";
-import { useEffect, useState } from "react";
+import { Box, Text, useApp, useInput, usePaste, useStdin, useStdout } from "ink";
+import { useEffect, useRef, useState } from "react";
 import { modelChoices } from "../config/load.js";
 import { listSessions } from "../sessions/store.js";
 import { useStore } from "../state/store.js";
+import { copyText, pasteText } from "./clipboard.js";
+import {
+  deleteRange,
+  deleteSelectionOr,
+  hasSelection,
+  insertText,
+  layoutLines,
+  lineEnd,
+  lineHome,
+  lineIndexForCursor,
+  lineRuns,
+  moveCursor,
+  moveGrapheme,
+  moveVertical,
+  sanitizeInsert,
+  selRange,
+  wordLeft,
+  wordRight,
+  type Draft,
+} from "./draft.js";
 import { ModelPicker } from "./model-picker.js";
 import { SessionPicker } from "./session-picker.js";
 import { filterSlash, SlashPalette, SLASH_COMMANDS } from "./slash-palette.js";
@@ -12,12 +32,58 @@ const GLYPH = " → ";
 const CONT = "   ";
 const COMPOSER_BG = "#1f1f1f";
 
-type VisLine = { text: string; start: number };
-
-function Caret({ ch }: { ch: string }) {
+function CaretText({
+  text,
+  col,
+  showCaret,
+  lineStart,
+  selStart,
+  selEnd,
+}: {
+  text: string;
+  col: number;
+  showCaret: boolean;
+  lineStart: number;
+  selStart: number;
+  selEnd: number;
+}) {
+  const hasSel = selEnd > selStart;
+  if (!showCaret && !hasSel) {
+    return <Text wrap="truncate">{text.length === 0 ? " " : text}</Text>;
+  }
+  if (showCaret && !hasSel) {
+    const at = col >= text.length ? " " : (text[col] ?? " ");
+    const before = col > 0 ? text.slice(0, Math.min(col, text.length)) : "";
+    const after = col >= text.length ? "" : text.slice(col + 1);
+    return (
+      <Text wrap="truncate">
+        {before}
+        <Text backgroundColor="white" color="black">
+          {at}
+        </Text>
+        {after}
+      </Text>
+    );
+  }
+  const runs = lineRuns({
+    text,
+    lineStart,
+    cursor: showCaret ? lineStart + col : -1,
+    selStart,
+    selEnd,
+    showCaret,
+  });
   return (
-    <Text backgroundColor="white" color="black">
-      {ch.length > 0 ? ch : " "}
+    <Text wrap="truncate">
+      {runs.map((run, ri) =>
+        run.kind === "plain" ? (
+          <Text key={ri}>{run.text}</Text>
+        ) : (
+          <Text key={ri} backgroundColor="white" color="black">
+            {run.text}
+          </Text>
+        ),
+      )}
     </Text>
   );
 }
@@ -66,130 +132,19 @@ function Placeholder({ text, caret }: { text: string; caret: boolean }) {
   );
 }
 
-/** Word-wrap with original-string offsets for cursor mapping. */
-function layoutLines(text: string, width: number): VisLine[] {
-  const w = Math.max(1, width);
-  if (text.length === 0) {
-    return [{ text: "", start: 0 }];
-  }
-  const out: VisLine[] = [];
-  const parts = text.split("\n");
-  let offset = 0;
-
-  for (let pi = 0; pi < parts.length; pi++) {
-    const para = parts[pi]!;
-    const paraStart = offset;
-
-    if (para.length === 0) {
-      out.push({ text: "", start: paraStart });
-    } else {
-      const words: { word: string; start: number }[] = [];
-      let i = 0;
-      while (i < para.length) {
-        while (i < para.length && para[i] === " ") {
-          i++;
-        }
-        if (i >= para.length) {
-          break;
-        }
-        const ws = i;
-        while (i < para.length && para[i] !== " ") {
-          i++;
-        }
-        words.push({ word: para.slice(ws, i), start: paraStart + ws });
-      }
-
-      let cur = "";
-      let curStart = paraStart;
-      for (let wi = 0; wi < words.length; wi++) {
-        const { word, start } = words[wi]!;
-        if (cur.length === 0) {
-          if (word.length > w) {
-            for (let c = 0; c < word.length; c += w) {
-              out.push({ text: word.slice(c, c + w), start: start + c });
-            }
-            cur = "";
-          } else {
-            cur = word;
-            curStart = start;
-          }
-          continue;
-        }
-        if (cur.length + 1 + word.length <= w) {
-          cur = `${cur} ${word}`;
-        } else {
-          out.push({ text: cur, start: curStart });
-          if (word.length > w) {
-            for (let c = 0; c < word.length; c += w) {
-              out.push({ text: word.slice(c, c + w), start: start + c });
-            }
-            cur = "";
-          } else {
-            cur = word;
-            curStart = start;
-          }
-        }
-      }
-      if (cur.length > 0 || words.length === 0) {
-        out.push({ text: cur, start: curStart });
-      }
-    }
-
-    offset += para.length;
-    if (pi < parts.length - 1) {
-      offset += 1;
-    }
-  }
-
-  return out.length > 0 ? out : [{ text: "", start: 0 }];
-}
-
-function lineIndexForCursor(lines: VisLine[], cursor: number, textLen: number): number {
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const nextStart = i + 1 < lines.length ? lines[i + 1]!.start : textLen + 1;
-    if (cursor >= line.start && cursor < nextStart) {
-      return i;
-    }
-  }
-  return Math.max(0, lines.length - 1);
-}
-
-function clampCursor(n: number, len: number): number {
-  return Math.max(0, Math.min(len, n));
-}
-
-function wordLeft(text: string, cursor: number): number {
-  let i = cursor;
-  while (i > 0 && /\s/.test(text[i - 1]!)) {
-    i--;
-  }
-  while (i > 0 && !/\s/.test(text[i - 1]!)) {
-    i--;
-  }
-  return i;
-}
-
-function wordRight(text: string, cursor: number): number {
-  let i = cursor;
-  while (i < text.length && !/\s/.test(text[i]!)) {
-    i++;
-  }
-  while (i < text.length && /\s/.test(text[i]!)) {
-    i++;
-  }
-  return i;
+function isFocusNoise(input: string): boolean {
+  return input === "\x1b[I" || input === "\x1b[O" || input === "[I" || input === "[O";
 }
 
 export function Composer() {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const focused = useTerminalFocus();
-  const [value, setValue] = useState("");
-  const [cursor, setCursor] = useState(0);
+  const [draft, setDraftState] = useState<Draft>({ value: "", cursor: 0, selAnchor: null });
+  const { value, cursor, selAnchor } = draft;
   const width = stdout.columns;
   const boxWidth = Math.max(20, width - 4);
-  const innerWidth = Math.max(8, boxWidth - 2 - GLYPH.length);
+  const innerWidth = Math.max(8, boxWidth - 4 - GLYPH.length);
   const placeholder = width < 80 ? "Ask a question..." : "Enter a command or ask a question...";
 
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -206,7 +161,23 @@ export function Composer() {
   const choices = modelChoices(config);
   const sessions = sessionPickerOpen ? listSessions(process.cwd()) : [];
 
+  const draftRef = useRef<Draft>({ value: "", cursor: 0, selAnchor: null });
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef<number | null>(null);
+  const liveDraftRef = useRef("");
+  const paletteOpenRef = useRef(false);
+  const paletteIndexRef = useRef(0);
+  const innerWidthRef = useRef(innerWidth);
+
+  historyRef.current = history;
+  historyIndexRef.current = historyIndex;
+  liveDraftRef.current = liveDraft;
+  paletteOpenRef.current = paletteOpen;
+  paletteIndexRef.current = paletteIndex;
+  innerWidthRef.current = innerWidth;
+
   const matches = filterSlash(value);
+  const draftActive = !pendingShell && !modelPickerOpen && !sessionPickerOpen;
 
   useEffect(() => {
     if (sessionPickerOpen) {
@@ -227,17 +198,37 @@ export function Composer() {
     setPickerIndex(i);
   }, [modelPickerOpen]);
 
-  useEffect(() => {
-    setPaletteIndex(0);
-  }, [value]);
+  function paint(next: Draft) {
+    const prev = draftRef.current;
+    if (prev.value === next.value && prev.cursor === next.cursor && prev.selAnchor === next.selAnchor) {
+      return;
+    }
+    draftRef.current = next;
+    setDraftState(next);
+  }
+
+  function clearHistoryBrowse() {
+    if (historyIndexRef.current === null) {
+      return;
+    }
+    historyIndexRef.current = null;
+    setHistoryIndex(null);
+  }
 
   function setDraft(next: string, nextCursor?: number) {
-    setValue(next);
-    setCursor(clampCursor(nextCursor ?? next.length, next.length));
+    paint({
+      value: next,
+      cursor: nextCursor ?? next.length,
+      selAnchor: null,
+    });
   }
 
   function remember(text: string) {
-    setHistory((prev) => [...prev, text]);
+    const nextHist = [...historyRef.current, text];
+    historyRef.current = nextHist;
+    historyIndexRef.current = null;
+    liveDraftRef.current = "";
+    setHistory(nextHist);
     setHistoryIndex(null);
     setLiveDraft("");
   }
@@ -246,11 +237,45 @@ export function Composer() {
     remember(line);
     useStore.getState().runCommand(line, exit);
     setDraft("");
+    paletteOpenRef.current = false;
     setPaletteOpen(false);
   }
 
+  function insertChunk(raw: string) {
+    const chunk = sanitizeInsert(raw);
+    if (chunk.length === 0) {
+      return;
+    }
+    const wasEmpty = draftRef.current.value.length === 0;
+    const next = insertText(draftRef.current, chunk);
+    paint(next);
+    clearHistoryBrowse();
+    if (wasEmpty && next.value.startsWith("/")) {
+      paletteOpenRef.current = true;
+      paletteIndexRef.current = 0;
+      setPaletteOpen(true);
+      setPaletteIndex(0);
+    }
+  }
+
+  function copySelection(): boolean {
+    const d = draftRef.current;
+    if (!hasSelection(d)) {
+      return false;
+    }
+    const { start, end } = selRange(d);
+    return copyText(d.value.slice(start, end));
+  }
+
+  usePaste(
+    (text) => {
+      insertChunk(text);
+    },
+    { isActive: draftActive },
+  );
+
   useInput((input, key) => {
-    if (input === "\x1b[I" || input === "\x1b[O" || input === "[I" || input === "[O") {
+    if (isFocusNoise(input)) {
       return;
     }
     if (pendingShell) {
@@ -315,9 +340,14 @@ export function Composer() {
       return;
     }
 
+    const liveMatches = filterSlash(draftRef.current.value);
+
     if (key.escape) {
-      if (paletteOpen) {
+      if (paletteOpenRef.current) {
+        paletteOpenRef.current = false;
         setPaletteOpen(false);
+      } else if (hasSelection(draftRef.current)) {
+        paint({ ...draftRef.current, selAnchor: null });
       } else {
         useStore.getState().cancelStream();
       }
@@ -330,116 +360,213 @@ export function Composer() {
     }
 
     if (key.tab) {
-      const slashMode = paletteOpen || value.startsWith("/");
-      if (slashMode && matches.length > 0) {
-        if (!paletteOpen) {
+      const slashMode = paletteOpenRef.current || draftRef.current.value.startsWith("/");
+      if (slashMode && liveMatches.length > 0) {
+        if (!paletteOpenRef.current) {
+          paletteOpenRef.current = true;
+          paletteIndexRef.current = 0;
           setPaletteOpen(true);
           setPaletteIndex(0);
         } else {
-          setPaletteIndex((i) => (i + 1) % matches.length);
+          setPaletteIndex((i) => {
+            const n = (i + 1) % liveMatches.length;
+            paletteIndexRef.current = n;
+            return n;
+          });
         }
       }
       return;
     }
 
-    if (key.ctrl && (input === "c" || input === "d")) {
+    if (key.ctrl && input === "c") {
+      if (copySelection()) {
+        paint({ ...draftRef.current, selAnchor: null });
+        return;
+      }
+      if (useStore.getState().streamingId) {
+        useStore.getState().cancelStream();
+        return;
+      }
       exit();
+      return;
+    }
+
+    if (key.ctrl && input === "d") {
+      if (draftRef.current.value.length === 0) {
+        exit();
+        return;
+      }
+      paint(deleteSelectionOr(draftRef.current, "delete"));
+      return;
+    }
+
+    if (key.ctrl && (input === "v" || input === "V")) {
+      const clip = pasteText();
+      if (clip) {
+        insertChunk(clip);
+      }
+      return;
+    }
+
+    if (key.ctrl && input === "a") {
+      const cur = draftRef.current;
+      if (cur.value.length === 0) {
+        return;
+      }
+      paint({ value: cur.value, cursor: cur.value.length, selAnchor: 0 });
+      return;
+    }
+
+    if (key.ctrl && input === "e") {
+      const d = draftRef.current;
+      paint(moveCursor(d, d.value.length, Boolean(key.shift)));
+      return;
+    }
+
+    if (key.ctrl && input === "k") {
+      const d = draftRef.current;
+      const end = lineEnd(d.value, d.cursor, innerWidthRef.current);
+      paint(deleteRange(d, d.cursor, end));
+      return;
+    }
+
+    if (key.ctrl && input === "u") {
+      const d = draftRef.current;
+      const start = lineHome(d.value, d.cursor, innerWidthRef.current);
+      paint(deleteRange(d, start, d.cursor));
+      return;
+    }
+
+    if (key.ctrl && input === "w") {
+      const d = draftRef.current;
+      if (hasSelection(d)) {
+        paint(deleteSelectionOr(d, "backspace"));
+        return;
+      }
+      paint(deleteRange(d, wordLeft(d.value, d.cursor), d.cursor));
       return;
     }
 
     const newline = (key.return && key.shift) || (key.ctrl && input === "j");
     if (newline) {
-      const next = value.slice(0, cursor) + "\n" + value.slice(cursor);
-      setDraft(next, cursor + 1);
-      setHistoryIndex(null);
+      insertChunk("\n");
       return;
     }
 
+    const extend = Boolean(key.shift);
+    const d = draftRef.current;
+
     if (key.leftArrow) {
-      setHistoryIndex(null);
-      if (key.ctrl || key.meta) {
-        setCursor(wordLeft(value, cursor));
-      } else {
-        setCursor((c) => Math.max(0, c - 1));
-      }
+      clearHistoryBrowse();
+      const next = key.ctrl || key.meta ? wordLeft(d.value, d.cursor) : moveGrapheme(d.value, d.cursor, -1);
+      paint(moveCursor(d, next, extend));
       return;
     }
 
     if (key.rightArrow) {
-      setHistoryIndex(null);
-      if (key.ctrl || key.meta) {
-        setCursor(wordRight(value, cursor));
-      } else {
-        setCursor((c) => Math.min(value.length, c + 1));
-      }
+      clearHistoryBrowse();
+      const next = key.ctrl || key.meta ? wordRight(d.value, d.cursor) : moveGrapheme(d.value, d.cursor, 1);
+      paint(moveCursor(d, next, extend));
       return;
     }
 
     if (key.home) {
-      setHistoryIndex(null);
-      setCursor(0);
+      clearHistoryBrowse();
+      paint(moveCursor(d, lineHome(d.value, d.cursor, innerWidthRef.current), extend));
       return;
     }
 
     if (key.end) {
-      setHistoryIndex(null);
-      setCursor(value.length);
+      clearHistoryBrowse();
+      paint(moveCursor(d, lineEnd(d.value, d.cursor, innerWidthRef.current), extend));
       return;
     }
 
     if (key.upArrow) {
-      if (paletteOpen && matches.length > 0) {
-        setPaletteIndex((i) => (i - 1 + matches.length) % matches.length);
+      if (paletteOpenRef.current && liveMatches.length > 0) {
+        setPaletteIndex((i) => {
+          const n = (i - 1 + liveMatches.length) % liveMatches.length;
+          paletteIndexRef.current = n;
+          return n;
+        });
         return;
       }
-      if (history.length === 0) {
+      const moved = moveVertical(d.value, d.cursor, innerWidthRef.current, -1);
+      if (moved !== null) {
+        paint(moveCursor(d, moved, extend));
         return;
       }
-      if (historyIndex === null) {
-        setLiveDraft(value);
-        const next = history.length - 1;
+      if (extend) {
+        paint(moveCursor(d, 0, true));
+        return;
+      }
+      const hist = historyRef.current;
+      if (hist.length === 0) {
+        return;
+      }
+      if (historyIndexRef.current === null) {
+        liveDraftRef.current = d.value;
+        setLiveDraft(d.value);
+        const next = hist.length - 1;
+        historyIndexRef.current = next;
         setHistoryIndex(next);
-        setDraft(history[next] ?? "");
-      } else if (historyIndex > 0) {
-        const next = historyIndex - 1;
+        setDraft(hist[next] ?? "");
+      } else if (historyIndexRef.current > 0) {
+        const next = historyIndexRef.current - 1;
+        historyIndexRef.current = next;
         setHistoryIndex(next);
-        setDraft(history[next] ?? "");
+        setDraft(hist[next] ?? "");
       }
       return;
     }
 
     if (key.downArrow) {
-      if (paletteOpen && matches.length > 0) {
-        setPaletteIndex((i) => (i + 1) % matches.length);
+      if (paletteOpenRef.current && liveMatches.length > 0) {
+        setPaletteIndex((i) => {
+          const n = (i + 1) % liveMatches.length;
+          paletteIndexRef.current = n;
+          return n;
+        });
         return;
       }
-      if (historyIndex === null) {
+      const moved = moveVertical(d.value, d.cursor, innerWidthRef.current, 1);
+      if (moved !== null) {
+        paint(moveCursor(d, moved, extend));
         return;
       }
-      if (historyIndex < history.length - 1) {
-        const next = historyIndex + 1;
+      if (extend) {
+        paint(moveCursor(d, d.value.length, true));
+        return;
+      }
+      if (historyIndexRef.current === null) {
+        return;
+      }
+      const hist = historyRef.current;
+      if (historyIndexRef.current < hist.length - 1) {
+        const next = historyIndexRef.current + 1;
+        historyIndexRef.current = next;
         setHistoryIndex(next);
-        setDraft(history[next] ?? "");
+        setDraft(hist[next] ?? "");
       } else {
+        historyIndexRef.current = null;
         setHistoryIndex(null);
-        setDraft(liveDraft);
+        setDraft(liveDraftRef.current);
       }
       return;
     }
 
     if (key.return) {
-      if (paletteOpen && matches.length > 0) {
-        const cmd = matches[Math.min(paletteIndex, matches.length - 1)];
+      if (paletteOpenRef.current && liveMatches.length > 0) {
+        const cmd = liveMatches[Math.min(paletteIndexRef.current, liveMatches.length - 1)];
         if (cmd) {
           runSlash(cmd.name);
         }
         return;
       }
-      const trimmed = value.trim();
+      const trimmed = d.value.trim();
       if (trimmed.startsWith("/")) {
         const token = trimmed.split(/\s/)[0] ?? trimmed;
         const known = SLASH_COMMANDS.find((c) => c.name === token);
-        // Keep args for commands like `/caveman full` or `/skill list`
         runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
         return;
       }
@@ -452,18 +579,11 @@ export function Composer() {
     }
 
     if (key.backspace || key.delete) {
-      if (key.delete) {
-        if (cursor >= value.length) {
-          return;
-        }
-        const next = value.slice(0, cursor) + value.slice(cursor + 1);
-        setDraft(next, cursor);
-      } else if (cursor > 0) {
-        const next = value.slice(0, cursor - 1) + value.slice(cursor);
-        setDraft(next, cursor - 1);
-      }
-      setHistoryIndex(null);
-      if (value.length <= 1) {
+      const next = deleteSelectionOr(d, key.delete ? "delete" : "backspace");
+      paint(next);
+      clearHistoryBrowse();
+      if (next.value.length === 0) {
+        paletteOpenRef.current = false;
         setPaletteOpen(false);
       }
       return;
@@ -474,13 +594,7 @@ export function Composer() {
     }
 
     if (input) {
-      const next = value.slice(0, cursor) + input + value.slice(cursor);
-      setDraft(next, cursor + input.length);
-      setHistoryIndex(null);
-      if (value.length === 0 && input === "/") {
-        setPaletteOpen(true);
-        setPaletteIndex(0);
-      }
+      insertChunk(input);
     }
   });
 
@@ -499,6 +613,7 @@ export function Composer() {
   const extra = boxHeight - visible.length;
   const padTop = Math.floor(extra / 2);
   const padBottom = extra - padTop;
+  const selection = selRange({ value, cursor, selAnchor });
 
   return (
     <Box flexDirection="column" width={width} marginTop={1} marginBottom={1} flexShrink={0}>
@@ -507,17 +622,19 @@ export function Composer() {
       ) : modelPickerOpen ? (
         <ModelPicker choices={choices} selected={pickerIndex} current={modelKey} />
       ) : paletteOpen ? (
-        <SlashPalette matches={matches} selected={paletteIndex} />
+        <SlashPalette matches={matches} selected={Math.min(paletteIndex, Math.max(0, matches.length - 1))} />
       ) : null}
       <Box
         flexDirection="column"
         width={boxWidth}
-        height={boxHeight}
+        height={boxHeight + 2}
         flexShrink={0}
         marginLeft={0}
         marginRight={4}
         paddingX={1}
         paddingY={0}
+        borderStyle="round"
+        borderColor="white"
         justifyContent="flex-start"
         alignItems="flex-start"
         backgroundColor={COMPOSER_BG}
@@ -529,12 +646,6 @@ export function Composer() {
           const abs = start + i;
           const glyph = abs === 0 ? GLYPH : CONT;
           const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
-          const col = onCaretLine
-            ? Math.max(0, Math.min(line.text.length, cursor - line.start))
-            : -1;
-          const before = col >= 0 ? line.text.slice(0, col) : line.text;
-          const at = col >= 0 ? line.text.slice(col, col + 1) : "";
-          const after = col >= 0 ? line.text.slice(col + 1) : "";
 
           return (
             <Box key={`line-${abs}`} width={innerWidth + GLYPH.length} flexShrink={0}>
@@ -543,14 +654,15 @@ export function Composer() {
               </Box>
               {showPlaceholder ? (
                 <Placeholder text={line.text} caret={focused} />
-              ) : onCaretLine ? (
-                <Text wrap="truncate">
-                  {before}
-                  <Caret ch={at} />
-                  {after}
-                </Text>
               ) : (
-                <Text wrap="truncate">{line.text.length === 0 ? " " : line.text}</Text>
+                <CaretText
+                  text={line.text}
+                  col={Math.max(0, cursor - line.start)}
+                  lineStart={line.start}
+                  selStart={selection.start}
+                  selEnd={selection.end}
+                  showCaret={onCaretLine}
+                />
               )}
             </Box>
           );
