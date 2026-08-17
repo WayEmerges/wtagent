@@ -12,6 +12,8 @@ const CODER_RE =
   /\b(implement|fix|refactor|write tests?|add tests?|create|patch|debug|build|compile|migrate|edit|change the code|update the code)\b/i;
 const BRAIN_RE =
   /\b(explain|why\b|what is|what's|how does|how do|review|summarize|compare|difference|meaning|overview)\b/i;
+const FILE_ASK_RE =
+  /\b(read|look at|open|inspect|show me|check)\b|\b[\w.-]+\.[A-Za-z][\w.-]*\b|\b(?:[\w.-]+\/)+[\w.-]+\b/i;
 
 /** Prefer chat/plan model (brain / main). */
 export function preferChatModel(config: LoadedConfig): string | undefined {
@@ -156,9 +158,9 @@ export async function routeTurn(args: {
     const key = preferCoderModel(config) ?? fb;
     return { modelKey: key, reason: "heuristic coder" };
   }
-  if (BRAIN_RE.test(userText)) {
+  if (BRAIN_RE.test(userText) || (FILE_ASK_RE.test(userText) && !CODER_RE.test(userText))) {
     const key = preferChatModel(config) ?? fb;
-    return { modelKey: key, reason: "heuristic brain" };
+    return { modelKey: key, reason: BRAIN_RE.test(userText) ? "heuristic brain" : "heuristic read/ask" };
   }
 
   // Optional orchestrator model

@@ -60,13 +60,16 @@ export const Transcript = memo(function Transcript() {
 
 export const ActivityLine = memo(function ActivityLine() {
   const streaming = useStore((s) => s.streamingId !== null);
+  const running = useStore((s) => s.rows.find((r) => r.kind === "tool" && r.status === "running"));
   if (!streaming) {
     return null;
   }
+  const label =
+    running && running.kind === "tool" ? `${running.name} ${running.args}`.trim() : "Working...";
   return (
     <Box>
       <SpinnerGlyph />
-      <Text> Working...</Text>
+      <Text> {label}</Text>
     </Box>
   );
 });

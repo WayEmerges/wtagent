@@ -9,11 +9,11 @@ export function xmlToolSystem(mode: AgentMode): string {
       : "Do not use write_file, edit_file, or run_shell. Do not edit files.";
   return `When you need a tool, output only this XML (no extra prose in the same turn):
 <tool_call>
-<name>list_dir</name>
-<arg name="path">.</arg>
+<name>read_file</name>
+<arg name="path">PATH</arg>
 </tool_call>
 Tools: read_file(path), list_dir(path), grep(pattern, path?), glob(pattern). ${extra}
-You may emit multiple tool_call blocks. After results, answer the user.`;
+Call each tool at most once per path. After tool results, answer — do not emit another tool_call. Never tell the user to type a tool name.`;
 }
 
 export function parseXmlToolCalls(text: string): ToolCall[] {

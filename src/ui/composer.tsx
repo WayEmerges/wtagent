@@ -25,7 +25,7 @@ import {
 } from "./draft.js";
 import { ModelPicker } from "./model-picker.js";
 import { SessionPicker } from "./session-picker.js";
-import { filterSlash, SlashPalette, SLASH_COMMANDS } from "./slash-palette.js";
+import { filterSlash, SlashPalette, SLASH_COMMANDS, SLASH_HOLD_REST, slashTokenAt, splitInlineSlash } from "./slash-palette.js";
 
 const MIN_INNER_LINES = 3;
 const GLYPH = " → ";
@@ -176,7 +176,8 @@ export function Composer() {
   paletteIndexRef.current = paletteIndex;
   innerWidthRef.current = innerWidth;
 
-  const matches = filterSlash(value);
+  const slashTok = slashTokenAt(value, cursor);
+  const matches = paletteOpen || slashTok ? filterSlash(slashTok?.token ?? "/") : [];
   const draftActive = !pendingShell && !modelPickerOpen && !sessionPickerOpen;
 
   useEffect(() => {
@@ -233,12 +234,63 @@ export function Composer() {
     setLiveDraft("");
   }
 
+  function syncPalette(next: Draft) {
+    const tok = slashTokenAt(next.value, next.cursor);
+    if (tok) {
+      if (!paletteOpenRef.current) {
+        paletteOpenRef.current = true;
+        paletteIndexRef.current = 0;
+        setPaletteOpen(true);
+        setPaletteIndex(0);
+      }
+      return;
+    }
+    if (paletteOpenRef.current) {
+      paletteOpenRef.current = false;
+      setPaletteOpen(false);
+    }
+  }
+
   function runSlash(line: string) {
     remember(line);
     useStore.getState().runCommand(line, exit);
-    setDraft("");
     paletteOpenRef.current = false;
     setPaletteOpen(false);
+  }
+
+  function submitOrSlash(raw: string) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      setDraft("");
+      paletteOpenRef.current = false;
+      setPaletteOpen(false);
+      return;
+    }
+    const split = splitInlineSlash(trimmed);
+    if (split) {
+      const cmdToken = (split.command.split(/\s/)[0] ?? "").toLowerCase();
+      runSlash(split.command);
+      if (SLASH_HOLD_REST.has(cmdToken)) {
+        setDraft(split.rest);
+        return;
+      }
+      if (split.rest.length > 0) {
+        remember(split.rest);
+        useStore.getState().submitUser(split.rest);
+      }
+      setDraft("");
+      return;
+    }
+    if (trimmed.startsWith("/")) {
+      const token = trimmed.split(/\s/)[0] ?? trimmed;
+      const known = SLASH_COMMANDS.find((c) => c.name === token);
+      runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
+      setDraft("");
+      return;
+    }
+    remember(trimmed);
+    useStore.getState().submitUser(trimmed);
+    setDraft("");
   }
 
   function insertChunk(raw: string) {
@@ -246,16 +298,10 @@ export function Composer() {
     if (chunk.length === 0) {
       return;
     }
-    const wasEmpty = draftRef.current.value.length === 0;
     const next = insertText(draftRef.current, chunk);
     paint(next);
     clearHistoryBrowse();
-    if (wasEmpty && next.value.startsWith("/")) {
-      paletteOpenRef.current = true;
-      paletteIndexRef.current = 0;
-      setPaletteOpen(true);
-      setPaletteIndex(0);
-    }
+    syncPalette(next);
   }
 
   function copySelection(): boolean {
@@ -340,7 +386,8 @@ export function Composer() {
       return;
     }
 
-    const liveMatches = filterSlash(draftRef.current.value);
+    const slashTok = slashTokenAt(draftRef.current.value, draftRef.current.cursor);
+    const liveMatches = filterSlash(slashTok?.token ?? (paletteOpenRef.current ? "/" : ""));
 
     if (key.escape) {
       if (paletteOpenRef.current) {
@@ -360,7 +407,7 @@ export function Composer() {
     }
 
     if (key.tab) {
-      const slashMode = paletteOpenRef.current || draftRef.current.value.startsWith("/");
+      const slashMode = paletteOpenRef.current || Boolean(slashTokenAt(draftRef.current.value, draftRef.current.cursor));
       if (slashMode && liveMatches.length > 0) {
         if (!paletteOpenRef.current) {
           paletteOpenRef.current = true;
@@ -396,7 +443,9 @@ export function Composer() {
         exit();
         return;
       }
-      paint(deleteSelectionOr(draftRef.current, "delete"));
+      const next = deleteSelectionOr(draftRef.current, "delete");
+      paint(next);
+      syncPalette(next);
       return;
     }
 
@@ -556,25 +605,17 @@ export function Composer() {
     }
 
     if (key.return) {
+      let text = d.value;
       if (paletteOpenRef.current && liveMatches.length > 0) {
         const cmd = liveMatches[Math.min(paletteIndexRef.current, liveMatches.length - 1)];
-        if (cmd) {
-          runSlash(cmd.name);
+        const tok = slashTokenAt(text, d.cursor);
+        if (cmd && tok) {
+          text = `${text.slice(0, tok.start)}${cmd.name}${text.slice(tok.end)}`;
+        } else if (cmd && text.trim().length === 0) {
+          text = cmd.name;
         }
-        return;
       }
-      const trimmed = d.value.trim();
-      if (trimmed.startsWith("/")) {
-        const token = trimmed.split(/\s/)[0] ?? trimmed;
-        const known = SLASH_COMMANDS.find((c) => c.name === token);
-        runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
-        return;
-      }
-      if (trimmed.length > 0) {
-        remember(trimmed);
-        useStore.getState().submitUser(trimmed);
-        setDraft("");
-      }
+      submitOrSlash(text);
       return;
     }
 
@@ -582,10 +623,7 @@ export function Composer() {
       const next = deleteSelectionOr(d, key.delete ? "delete" : "backspace");
       paint(next);
       clearHistoryBrowse();
-      if (next.value.length === 0) {
-        paletteOpenRef.current = false;
-        setPaletteOpen(false);
-      }
+      syncPalette(next);
       return;
     }
 

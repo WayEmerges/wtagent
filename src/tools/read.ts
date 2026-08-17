@@ -1,7 +1,9 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const MAX_READ = 200_000;
+const READ_TIMEOUT_MS = 8_000;
 
 export function resolvePath(p: string): string {
   return resolve(process.cwd(), p);
@@ -9,11 +11,33 @@ export function resolvePath(p: string): string {
 
 export async function readFileTool(path: string): Promise<string> {
   const abs = resolvePath(path);
-  const buf = await readFile(abs);
-  if (buf.length > MAX_READ) {
-    return `${buf.subarray(0, MAX_READ).toString("utf8")}\n\n[truncated ${buf.length} bytes]`;
+  const st = await stat(abs);
+  if (st.isDirectory()) {
+    throw new Error(`${path} is a directory — use list_dir`);
   }
-  return buf.toString("utf8");
+  if (st.size === 0) {
+    return "";
+  }
+  return await new Promise<string>((resolvePromise, reject) => {
+    const chunks: Buffer[] = [];
+    const stream = createReadStream(abs, { start: 0, end: Math.max(0, MAX_READ - 1) });
+    const timer = setTimeout(() => {
+      stream.destroy();
+      reject(new Error(`read timed out: ${path}`));
+    }, READ_TIMEOUT_MS);
+    stream.on("data", (chunk: string | Buffer) => {
+      chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+    });
+    stream.on("end", () => {
+      clearTimeout(timer);
+      const text = Buffer.concat(chunks).toString("utf8");
+      resolvePromise(st.size > MAX_READ ? `${text}\n\n[truncated ${st.size} bytes]` : text);
+    });
+    stream.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 export async function listDirTool(path: string): Promise<string> {

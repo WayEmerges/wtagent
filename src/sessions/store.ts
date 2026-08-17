@@ -52,6 +52,8 @@ function parseRow(v: unknown): TranscriptRow | undefined {
       args: typeof o.args === "string" ? o.args : "",
       status: status === "running" ? "done" : status,
       detail: typeof o.detail === "string" ? o.detail : undefined,
+      output: typeof o.output === "string" ? o.output : undefined,
+      path: typeof o.path === "string" ? o.path : undefined,
     };
   }
   return undefined;

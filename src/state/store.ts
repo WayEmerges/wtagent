@@ -13,6 +13,7 @@ import { compactSession, summarizerModelKey } from "../memory/compact.js";
 import { routeTurn } from "../orchestrator/route.js";
 import {
   ensureUserSkills,
+  getSkill,
   handleSkillsCommand,
   readSkillState,
 } from "../skills/load.js";
@@ -526,8 +527,19 @@ export const useStore = create<SessionStore>((set, get) => ({
           get().addError(msg);
         }
         return;
-      default:
+      default: {
+        const id = token.replace(/^\//, "");
+        if (id && getSkill(id)) {
+          try {
+            get().addNotice(handleSkillsCommand(`/skill ${id} toggle`));
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            get().addError(msg);
+          }
+          return;
+        }
         get().addNotice(`${token || trimmed} is not implemented`);
+      }
     }
   },
 }));
