@@ -1,6 +1,6 @@
 # Global gitignore on this machine is '*' (home dotfiles). Re-include the project.
 !*
-node_modules/
+# node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
