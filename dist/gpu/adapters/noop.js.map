@@ -1,0 +1,1 @@
+{"version":3,"file":"noop.js","sourceRoot":"","sources":["../../../src/gpu/adapters/noop.ts"],"names":[],"mappings":"AAEA,4DAA4D;AAC5D,MAAM,CAAC,MAAM,WAAW,GAAwB;IAC9C,IAAI,EAAE,MAAM;IACZ,KAAK,CAAC,YAAY;QAChB,sBAAsB;IACxB,CAAC;CACF,CAAC"}

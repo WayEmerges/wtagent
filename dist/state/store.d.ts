@@ -1,0 +1,48 @@
+import { type LoadedConfig } from "../config/load.js";
+import { type TokenUsage } from "../llm/stream.js";
+import { type SavedSession } from "../sessions/store.js";
+import type { TranscriptRow } from "../ui/rows.js";
+import { type AgentMode } from "./session.js";
+export type ShellDecision = "allow" | "deny" | "yolo";
+export type SessionStore = {
+    rows: TranscriptRow[];
+    mode: AgentMode;
+    streamingId: string | null;
+    config: LoadedConfig;
+    modelKey: string;
+    /** Concrete model used for the active/last Auto-routed turn. */
+    resolvedModelKey: string | null;
+    modelPickerOpen: boolean;
+    sessionPickerOpen: boolean;
+    sessionId: string;
+    sessionCreatedAt: string;
+    initialPrompt?: string;
+    usage: TokenUsage | null;
+    usageApprox: boolean;
+    yolo: boolean;
+    pendingShell: {
+        command: string;
+    } | null;
+    cycleMode: () => void;
+    addNotice: (text: string) => void;
+    addError: (text: string) => void;
+    clearChat: () => void;
+    submitUser: (text: string) => void;
+    cancelStream: () => void;
+    openModelPicker: () => void;
+    closeModelPicker: () => void;
+    selectModel: (key: string) => void;
+    openSessionPicker: () => void;
+    closeSessionPicker: () => void;
+    selectSession: (id: string) => void;
+    loadSession: (session: SavedSession) => void;
+    resumeLatest: () => boolean;
+    applyFlagModel: (flag?: string) => void;
+    applyFlagMode: (flag?: string) => void;
+    applyFlagYolo: (on: boolean) => void;
+    resolveShell: (d: ShellDecision) => void;
+    setInitialPrompt: (text: string) => void;
+    consumeInitialPrompt: () => string | undefined;
+    runCommand: (name: string, exit: () => void) => void;
+};
+export declare const useStore: import("zustand").UseBoundStore<import("zustand").StoreApi<SessionStore>>;
