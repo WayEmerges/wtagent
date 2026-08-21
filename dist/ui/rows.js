@@ -1,10 +1,9 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { Box, Text, useStdout } from "ink";
 import { useEffect, useState } from "react";
+import { USER_MSG_BG } from "./chrome.js";
 import { MarkdownView } from "./markdown.js";
 import { wrapWords } from "./wrap.js";
-const USER_BOX_ROWS = 3;
-const USER_BOX_BG = "#3a3a3a";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 export function SpinnerGlyph() {
     const [i, setI] = useState(0);
@@ -21,11 +20,10 @@ export function SpinnerGlyph() {
 function UserPromptBox({ text }) {
     const { stdout } = useStdout();
     const width = stdout.columns;
-    const boxWidth = Math.max(20, width - 4);
-    const inner = Math.max(8, boxWidth - 2 - 3);
+    const boxWidth = Math.max(20, width - 2);
+    const inner = Math.max(8, boxWidth - 1 - 5);
     const lines = wrapWords(text, inner);
-    const height = Math.max(USER_BOX_ROWS, lines.length + 2);
-    return (_jsxs(Box, { flexDirection: "column", width: boxWidth, height: height, flexShrink: 0, marginRight: 4, paddingX: 1, justifyContent: "flex-start", backgroundColor: USER_BOX_BG, children: [_jsx(Text, { children: " " }), lines.map((line, idx) => (_jsxs(Text, { children: [idx === 0 ? " → " : "   ", line] }, idx))), _jsx(Text, { children: " " })] }));
+    return (_jsx(Box, { flexDirection: "column", backgroundColor: USER_MSG_BG, paddingLeft: 1, paddingRight: 5, paddingY: 1, marginX: 1, width: boxWidth, flexShrink: 0, children: lines.map((line, idx) => (_jsx(Text, { wrap: "wrap", children: line }, idx))) }));
 }
 export function RowView({ row }) {
     if (row.kind === "user") {

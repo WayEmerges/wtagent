@@ -1,10 +1,8 @@
 import { Box, Text, useStdout } from "ink";
 import { useEffect, useState } from "react";
+import { USER_MSG_BG } from "./chrome.js";
 import { MarkdownView } from "./markdown.js";
 import { wrapWords } from "./wrap.js";
-
-const USER_BOX_ROWS = 3;
-const USER_BOX_BG = "#3a3a3a";
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
@@ -31,30 +29,26 @@ export function SpinnerGlyph() {
 function UserPromptBox({ text }: { text: string }) {
   const { stdout } = useStdout();
   const width = stdout.columns;
-  const boxWidth = Math.max(20, width - 4);
-  const inner = Math.max(8, boxWidth - 2 - 3);
+  const boxWidth = Math.max(20, width - 2);
+  const inner = Math.max(8, boxWidth - 1 - 5);
   const lines = wrapWords(text, inner);
-  const height = Math.max(USER_BOX_ROWS, lines.length + 2);
 
   return (
     <Box
       flexDirection="column"
+      backgroundColor={USER_MSG_BG}
+      paddingLeft={1}
+      paddingRight={5}
+      paddingY={1}
+      marginX={1}
       width={boxWidth}
-      height={height}
       flexShrink={0}
-      marginRight={4}
-      paddingX={1}
-      justifyContent="flex-start"
-      backgroundColor={USER_BOX_BG}
     >
-      <Text> </Text>
       {lines.map((line, idx) => (
-        <Text key={idx}>
-          {idx === 0 ? " → " : "   "}
+        <Text key={idx} wrap="wrap">
           {line}
         </Text>
       ))}
-      <Text> </Text>
     </Box>
   );
 }

@@ -13,6 +13,8 @@ export type TranscriptRow = {
     args: string;
     status: "running" | "done" | "error";
     detail?: string;
+    output?: string;
+    path?: string;
 } | {
     id: string;
     kind: "notice";

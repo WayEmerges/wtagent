@@ -11,19 +11,29 @@ export function ModelPicker({
   current: string;
 }) {
   return (
-    <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="gray">
-      <Text dimColor>Select model</Text>
+    <Box flexDirection="column" paddingX={2}>
+      <Box paddingLeft={3}>
+        <Text dimColor>Select model</Text>
+      </Box>
       {choices.map((c, i) => {
         const active = i === selected;
         const mark = c.key === current ? "*" : " ";
         const name = `${mark} ${c.key}  ${c.label}`;
         const extra = c.disabled ? "  (disabled)" : c.baseURL ? `  ${c.baseURL}` : "";
         return (
-          <Box key={c.key}>
-            <Text inverse={active} dimColor={c.disabled && !active}>
+          <Box key={c.key} width="100%" flexDirection="row" alignItems="center">
+            <Box width={1} backgroundColor={active ? "cyan" : undefined}>
+              <Text> </Text>
+            </Box>
+            <Box width={2}>
+              <Text color={active ? "cyan" : undefined} dimColor={!active}>
+                {active ? "→ " : "  "}
+              </Text>
+            </Box>
+            <Text bold={active} dimColor={c.disabled && !active} wrap="truncate">
               {name}
+              {extra}
             </Text>
-            <Text dimColor>{extra}</Text>
           </Box>
         );
       })}

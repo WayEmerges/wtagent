@@ -23,9 +23,11 @@ export const Transcript = memo(function Transcript() {
 });
 export const ActivityLine = memo(function ActivityLine() {
     const streaming = useStore((s) => s.streamingId !== null);
+    const running = useStore((s) => s.rows.find((r) => r.kind === "tool" && r.status === "running"));
     if (!streaming) {
         return null;
     }
-    return (_jsxs(Box, { children: [_jsx(SpinnerGlyph, {}), _jsx(Text, { children: " Working..." })] }));
+    const label = running && running.kind === "tool" ? `${running.name} ${running.args}`.trim() : "Working...";
+    return (_jsxs(Box, { children: [_jsx(SpinnerGlyph, {}), _jsxs(Text, { children: [" ", label] })] }));
 });
 //# sourceMappingURL=transcript.js.map

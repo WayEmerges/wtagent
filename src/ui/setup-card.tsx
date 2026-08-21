@@ -6,7 +6,7 @@ export function SetupCard() {
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1} justifyContent="center">
-      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0}>
+      <Box borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1} flexDirection="column">
         <Text color="yellow">Setup</Text>
         <Text> </Text>
         {config.invalid ? (
@@ -18,7 +18,7 @@ export function SetupCard() {
         <Text dimColor>{config.path}</Text>
         <Text> </Text>
         <Text>mkdir -p ~/.waytech-agent</Text>
-        <Text>cp ~/Projects/local_cli/config.json.example ~/.waytech-agent/config.json</Text>
+        <Text>cp ~/Projects/wtagent/config.json.example ~/.waytech-agent/config.json</Text>
         <Text> </Text>
         <Text dimColor>/quit to exit · /help for commands</Text>
       </Box>

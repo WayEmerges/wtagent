@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { basename } from "node:path";
+import { homedir } from "node:os";
 import { Box, Text, useStdout } from "ink";
 import { memo, useMemo } from "react";
 import { useStore } from "../state/store.js";
@@ -37,6 +37,14 @@ function formatCount(n: number): string {
   return String(n);
 }
 
+function displayPath(cwd: string): string {
+  const home = homedir();
+  if (cwd.startsWith(home)) {
+    return `~${cwd.slice(home.length)}`;
+  }
+  return cwd;
+}
+
 export const Footer = memo(function Footer() {
   const { stdout } = useStdout();
   const mode = useStore((s) => s.mode);
@@ -46,7 +54,7 @@ export const Footer = memo(function Footer() {
   const usage = useStore((s) => s.usage);
   const usageApprox = useStore((s) => s.usageApprox);
   const cwd = process.cwd();
-  const dir = basename(cwd);
+  const pathLabel = displayPath(cwd);
   const branch = useMemo(() => gitBranch(cwd), [cwd]);
   const modeColor = mode === "Plan" ? "yellow" : mode === "Ask" ? "blue" : undefined;
   const effectiveKey =
@@ -78,16 +86,19 @@ export const Footer = memo(function Footer() {
         : `${modelKey} · ${label}`;
 
   return (
-    <Box paddingLeft={3}>
-      <Text color={modeColor}>{mode}</Text>
-      <Text dimColor>
-        {" · "}
-        {modelShown}
-        {tokenBit ? ` · ${tokenBit}` : ""}
-        {" · "}
-        {dir}
-        {branch ? ` · ${branch}` : ""}
-      </Text>
+    <Box flexDirection="column" marginLeft={2} marginRight={1} marginTop={0}>
+      <Box flexDirection="row" flexShrink={1}>
+        <Text color={modeColor}>{mode}</Text>
+        <Text dimColor> · </Text>
+        <Text dimColor>{modelShown}</Text>
+        {tokenBit ? <Text dimColor>{` · ${tokenBit}`}</Text> : null}
+      </Box>
+      <Box>
+        <Text dimColor>
+          {pathLabel}
+          {branch ? ` · ${branch}` : ""}
+        </Text>
+      </Box>
     </Box>
   );
 });

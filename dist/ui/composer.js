@@ -6,13 +6,13 @@ import { listSessions } from "../sessions/store.js";
 import { useStore } from "../state/store.js";
 import { copyText, pasteText } from "./clipboard.js";
 import { deleteRange, deleteSelectionOr, hasSelection, insertText, layoutLines, lineEnd, lineHome, lineIndexForCursor, lineRuns, moveCursor, moveGrapheme, moveVertical, sanitizeInsert, selRange, wordLeft, wordRight, } from "./draft.js";
+import { PromptChrome, PROMPT_BG } from "./chrome.js";
 import { ModelPicker } from "./model-picker.js";
 import { SessionPicker } from "./session-picker.js";
-import { filterSlash, SlashPalette, SLASH_COMMANDS } from "./slash-palette.js";
-const MIN_INNER_LINES = 3;
-const GLYPH = " → ";
-const CONT = "   ";
-const COMPOSER_BG = "#1f1f1f";
+import { filterSlash, SlashPalette, SLASH_COMMANDS, SLASH_HOLD_REST, slashTokenAt, splitInlineSlash } from "./slash-palette.js";
+/** Match Cursor prompt-bar visible window (constants V1). */
+const MAX_INNER_LINES = 6;
+const PROMPT_SYMBOL = "→";
 function CaretText({ text, col, showCaret, lineStart, selStart, selEnd, }) {
     const hasSel = selEnd > selStart;
     if (!showCaret && !hasSel) {
@@ -22,7 +22,7 @@ function CaretText({ text, col, showCaret, lineStart, selStart, selEnd, }) {
         const at = col >= text.length ? " " : (text[col] ?? " ");
         const before = col > 0 ? text.slice(0, Math.min(col, text.length)) : "";
         const after = col >= text.length ? "" : text.slice(col + 1);
-        return (_jsxs(Text, { wrap: "truncate", children: [before, _jsx(Text, { backgroundColor: "white", color: "black", children: at }), after] }));
+        return (_jsxs(Text, { wrap: "truncate", children: [before, _jsx(Text, { inverse: true, children: at }), after] }));
     }
     const runs = lineRuns({
         text,
@@ -32,7 +32,7 @@ function CaretText({ text, col, showCaret, lineStart, selStart, selEnd, }) {
         selEnd,
         showCaret,
     });
-    return (_jsx(Text, { wrap: "truncate", children: runs.map((run, ri) => run.kind === "plain" ? (_jsx(Text, { children: run.text }, ri)) : (_jsx(Text, { backgroundColor: "white", color: "black", children: run.text }, ri))) }));
+    return (_jsx(Text, { wrap: "truncate", children: runs.map((run, ri) => run.kind === "plain" ? (_jsx(Text, { children: run.text }, ri)) : (_jsx(Text, { inverse: true, children: run.text }, ri))) }));
 }
 function useTerminalFocus() {
     const [focused, setFocused] = useState(true);
@@ -61,7 +61,7 @@ function Placeholder({ text, caret }) {
     if (!caret || text.length === 0) {
         return (_jsx(Text, { dimColor: true, wrap: "truncate", children: text }));
     }
-    return (_jsxs(Text, { wrap: "truncate", children: [_jsx(Text, { backgroundColor: "white", color: "black", children: text.slice(0, 1) }), _jsx(Text, { dimColor: true, children: text.slice(1) })] }));
+    return (_jsxs(Text, { wrap: "truncate", children: [_jsx(Text, { inverse: true, children: text.slice(0, 1) }), _jsx(Text, { dimColor: true, children: text.slice(1) })] }));
 }
 function isFocusNoise(input) {
     return input === "\x1b[I" || input === "\x1b[O" || input === "[I" || input === "[O";
@@ -73,9 +73,11 @@ export function Composer() {
     const [draft, setDraftState] = useState({ value: "", cursor: 0, selAnchor: null });
     const { value, cursor, selAnchor } = draft;
     const width = stdout.columns;
-    const boxWidth = Math.max(20, width - 4);
-    const innerWidth = Math.max(8, boxWidth - 4 - GLYPH.length);
-    const placeholder = width < 80 ? "Ask a question..." : "Enter a command or ask a question...";
+    const boxWidth = Math.max(20, width - 2);
+    // paddingLeft(1) + "→ " (2) — text column matches Cursor prompt-bar.
+    const innerWidth = Math.max(8, boxWidth - 1 - 2);
+    const hasTranscript = useStore((s) => s.rows.some((r) => r.kind === "user" || r.kind === "assistant"));
+    const placeholder = hasTranscript ? "Add a follow-up" : "Plan, search, build anything";
     const [paletteOpen, setPaletteOpen] = useState(false);
     const [paletteIndex, setPaletteIndex] = useState(0);
     const [pickerIndex, setPickerIndex] = useState(0);
@@ -102,7 +104,8 @@ export function Composer() {
     paletteOpenRef.current = paletteOpen;
     paletteIndexRef.current = paletteIndex;
     innerWidthRef.current = innerWidth;
-    const matches = filterSlash(value);
+    const slashTok = slashTokenAt(value, cursor);
+    const matches = paletteOpen || slashTok ? filterSlash(slashTok?.token ?? "/") : [];
     const draftActive = !pendingShell && !modelPickerOpen && !sessionPickerOpen;
     useEffect(() => {
         if (sessionPickerOpen) {
@@ -149,28 +152,71 @@ export function Composer() {
         setHistoryIndex(null);
         setLiveDraft("");
     }
+    function syncPalette(next) {
+        const tok = slashTokenAt(next.value, next.cursor);
+        if (tok) {
+            if (!paletteOpenRef.current) {
+                paletteOpenRef.current = true;
+                paletteIndexRef.current = 0;
+                setPaletteOpen(true);
+                setPaletteIndex(0);
+            }
+            return;
+        }
+        if (paletteOpenRef.current) {
+            paletteOpenRef.current = false;
+            setPaletteOpen(false);
+        }
+    }
     function runSlash(line) {
         remember(line);
         useStore.getState().runCommand(line, exit);
-        setDraft("");
         paletteOpenRef.current = false;
         setPaletteOpen(false);
+    }
+    function submitOrSlash(raw) {
+        const trimmed = raw.trim();
+        if (trimmed.length === 0) {
+            setDraft("");
+            paletteOpenRef.current = false;
+            setPaletteOpen(false);
+            return;
+        }
+        const split = splitInlineSlash(trimmed);
+        if (split) {
+            const cmdToken = (split.command.split(/\s/)[0] ?? "").toLowerCase();
+            runSlash(split.command);
+            if (SLASH_HOLD_REST.has(cmdToken)) {
+                setDraft(split.rest);
+                return;
+            }
+            if (split.rest.length > 0) {
+                remember(split.rest);
+                useStore.getState().submitUser(split.rest);
+            }
+            setDraft("");
+            return;
+        }
+        if (trimmed.startsWith("/")) {
+            const token = trimmed.split(/\s/)[0] ?? trimmed;
+            const known = SLASH_COMMANDS.find((c) => c.name === token);
+            runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
+            setDraft("");
+            return;
+        }
+        remember(trimmed);
+        useStore.getState().submitUser(trimmed);
+        setDraft("");
     }
     function insertChunk(raw) {
         const chunk = sanitizeInsert(raw);
         if (chunk.length === 0) {
             return;
         }
-        const wasEmpty = draftRef.current.value.length === 0;
         const next = insertText(draftRef.current, chunk);
         paint(next);
         clearHistoryBrowse();
-        if (wasEmpty && next.value.startsWith("/")) {
-            paletteOpenRef.current = true;
-            paletteIndexRef.current = 0;
-            setPaletteOpen(true);
-            setPaletteIndex(0);
-        }
+        syncPalette(next);
     }
     function copySelection() {
         const d = draftRef.current;
@@ -246,7 +292,8 @@ export function Composer() {
             }
             return;
         }
-        const liveMatches = filterSlash(draftRef.current.value);
+        const slashTok = slashTokenAt(draftRef.current.value, draftRef.current.cursor);
+        const liveMatches = filterSlash(slashTok?.token ?? (paletteOpenRef.current ? "/" : ""));
         if (key.escape) {
             if (paletteOpenRef.current) {
                 paletteOpenRef.current = false;
@@ -265,7 +312,7 @@ export function Composer() {
             return;
         }
         if (key.tab) {
-            const slashMode = paletteOpenRef.current || draftRef.current.value.startsWith("/");
+            const slashMode = paletteOpenRef.current || Boolean(slashTokenAt(draftRef.current.value, draftRef.current.cursor));
             if (slashMode && liveMatches.length > 0) {
                 if (!paletteOpenRef.current) {
                     paletteOpenRef.current = true;
@@ -300,7 +347,9 @@ export function Composer() {
                 exit();
                 return;
             }
-            paint(deleteSelectionOr(draftRef.current, "delete"));
+            const next = deleteSelectionOr(draftRef.current, "delete");
+            paint(next);
+            syncPalette(next);
             return;
         }
         if (key.ctrl && (input === "v" || input === "V")) {
@@ -447,35 +496,25 @@ export function Composer() {
             return;
         }
         if (key.return) {
+            let text = d.value;
             if (paletteOpenRef.current && liveMatches.length > 0) {
                 const cmd = liveMatches[Math.min(paletteIndexRef.current, liveMatches.length - 1)];
-                if (cmd) {
-                    runSlash(cmd.name);
+                const tok = slashTokenAt(text, d.cursor);
+                if (cmd && tok) {
+                    text = `${text.slice(0, tok.start)}${cmd.name}${text.slice(tok.end)}`;
                 }
-                return;
+                else if (cmd && text.trim().length === 0) {
+                    text = cmd.name;
+                }
             }
-            const trimmed = d.value.trim();
-            if (trimmed.startsWith("/")) {
-                const token = trimmed.split(/\s/)[0] ?? trimmed;
-                const known = SLASH_COMMANDS.find((c) => c.name === token);
-                runSlash(known ? `${known.name}${trimmed.slice(token.length)}` : trimmed);
-                return;
-            }
-            if (trimmed.length > 0) {
-                remember(trimmed);
-                useStore.getState().submitUser(trimmed);
-                setDraft("");
-            }
+            submitOrSlash(text);
             return;
         }
         if (key.backspace || key.delete) {
             const next = deleteSelectionOr(d, key.delete ? "delete" : "backspace");
             paint(next);
             clearHistoryBrowse();
-            if (next.value.length === 0) {
-                paletteOpenRef.current = false;
-                setPaletteOpen(false);
-            }
+            syncPalette(next);
             return;
         }
         if (key.ctrl || key.meta) {
@@ -488,7 +527,7 @@ export function Composer() {
     const showPlaceholder = value.length === 0;
     const allLines = showPlaceholder ? [{ text: placeholder, start: 0 }] : layoutLines(value, innerWidth);
     const cursorLine = showPlaceholder ? 0 : lineIndexForCursor(allLines, cursor, value.length);
-    const boxHeight = MIN_INNER_LINES;
+    const boxHeight = Math.min(MAX_INNER_LINES, Math.max(1, allLines.length));
     let start = Math.max(0, allLines.length - boxHeight);
     if (cursorLine < start) {
         start = cursorLine;
@@ -497,15 +536,12 @@ export function Composer() {
         start = cursorLine - boxHeight + 1;
     }
     const visible = allLines.slice(start, start + boxHeight);
-    const extra = boxHeight - visible.length;
-    const padTop = Math.floor(extra / 2);
-    const padBottom = extra - padTop;
     const selection = selRange({ value, cursor, selAnchor });
-    return (_jsxs(Box, { flexDirection: "column", width: width, marginTop: 1, marginBottom: 1, flexShrink: 0, children: [sessionPickerOpen ? (_jsx(SessionPicker, { sessions: sessions, selected: pickerIndex })) : modelPickerOpen ? (_jsx(ModelPicker, { choices: choices, selected: pickerIndex, current: modelKey })) : paletteOpen ? (_jsx(SlashPalette, { matches: matches, selected: Math.min(paletteIndex, Math.max(0, matches.length - 1)) })) : null, _jsxs(Box, { flexDirection: "column", width: boxWidth, height: boxHeight + 2, flexShrink: 0, marginLeft: 0, marginRight: 4, paddingX: 1, paddingY: 0, borderStyle: "round", borderColor: "white", justifyContent: "flex-start", alignItems: "flex-start", backgroundColor: COMPOSER_BG, children: [Array.from({ length: padTop }, (_, i) => (_jsx(Text, { children: " " }, `pad-top-${i}`))), visible.map((line, i) => {
-                        const abs = start + i;
-                        const glyph = abs === 0 ? GLYPH : CONT;
-                        const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
-                        return (_jsxs(Box, { width: innerWidth + GLYPH.length, flexShrink: 0, children: [_jsx(Box, { width: GLYPH.length, flexShrink: 0, children: _jsx(Text, { children: glyph }) }), showPlaceholder ? (_jsx(Placeholder, { text: line.text, caret: focused })) : (_jsx(CaretText, { text: line.text, col: Math.max(0, cursor - line.start), lineStart: line.start, selStart: selection.start, selEnd: selection.end, showCaret: onCaretLine }))] }, `line-${abs}`));
-                    }), Array.from({ length: padBottom }, (_, i) => (_jsx(Text, { children: " " }, `pad-bot-${i}`)))] })] }));
+    const symbolDim = showPlaceholder;
+    return (_jsxs(Box, { flexDirection: "column", width: width, marginTop: 0, marginBottom: 0, flexShrink: 0, children: [sessionPickerOpen ? (_jsx(SessionPicker, { sessions: sessions, selected: pickerIndex })) : modelPickerOpen ? (_jsx(ModelPicker, { choices: choices, selected: pickerIndex, current: modelKey })) : paletteOpen ? (_jsx(SlashPalette, { matches: matches, selected: Math.min(paletteIndex, Math.max(0, matches.length - 1)) })) : null, _jsx(PromptChrome, { backgroundColor: PROMPT_BG, width: boxWidth, children: _jsxs(Box, { flexDirection: "row", width: "100%", children: [_jsx(Box, { flexShrink: 0, children: _jsxs(Text, { dimColor: symbolDim, children: [PROMPT_SYMBOL, " "] }) }), _jsx(Box, { flexDirection: "column", flexGrow: 1, children: visible.map((line, i) => {
+                                const abs = start + i;
+                                const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
+                                return (_jsx(Box, { width: innerWidth, flexShrink: 0, children: showPlaceholder ? (_jsx(Placeholder, { text: line.text, caret: focused })) : (_jsx(CaretText, { text: line.text, col: Math.max(0, cursor - line.start), lineStart: line.start, selStart: selection.start, selEnd: selection.end, showCaret: onCaretLine })) }, `line-${abs}`));
+                            }) })] }) })] }));
 }
 //# sourceMappingURL=composer.js.map

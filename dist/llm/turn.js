@@ -10,7 +10,124 @@ const xmlByServer = new Map();
 function nextId() {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
-function systemPrompt(mode, xml, memoryDigest, skillsDigest) {
+const FILE_PACK_EACH = 20_000;
+const FILE_PACK_TOTAL = 60_000;
+const SOURCE_FILES_LEAD = "SOURCE FILES (verbatim from disk — this is the only code that exists):";
+const ANSWER_FROM_FILES = [
+    "When file contents are attached or in tool results, answer FROM that text.",
+    "If the user asks to show, see, paste, or quote a method: copy the real function into a markdown fenced code block. Do not paraphrase it away.",
+    "Use the real names that appear in the file. Never invent methods, line numbers, or example classes.",
+    "If a name is not in the attached files, say it is not in the file. Do not write placeholder code.",
+    "Never reply with only 'file read' / 'X read.' That is not an answer.",
+].join(" ");
+function withLineNumbers(text) {
+    const lines = text.split("\n");
+    const pad = String(Math.max(1, lines.length)).length;
+    return lines.map((line, i) => `${String(i + 1).padStart(pad, " ")}|${line}`).join("\n");
+}
+function filePackFromRows(rows) {
+    const byPath = new Map();
+    for (const row of rows) {
+        if (row.kind !== "tool" || row.name !== "read_file" || row.status !== "done" || !row.output) {
+            continue;
+        }
+        const path = (row.path && row.path.length > 0 ? row.path : row.args.replace(/^path=/, "")).trim();
+        if (path.length === 0) {
+            continue;
+        }
+        byPath.set(path, row.output);
+    }
+    if (byPath.size === 0) {
+        return "";
+    }
+    let budget = FILE_PACK_TOTAL;
+    const parts = [];
+    for (const [path, raw] of byPath) {
+        let body = withLineNumbers(raw);
+        if (body.length > FILE_PACK_EACH) {
+            body = `${body.slice(0, FILE_PACK_EACH)}\n…[truncated]`;
+        }
+        if (body.length > budget) {
+            body = `${body.slice(0, Math.max(0, budget))}\n…[truncated]`;
+        }
+        parts.push(`### ${path}\n\`\`\`\n${body}\n\`\`\``);
+        budget -= body.length;
+        if (budget < 1500) {
+            break;
+        }
+    }
+    return parts.join("\n\n");
+}
+function packHasPath(pack, path) {
+    const base = path.split("/").pop() ?? path;
+    return pack.includes(`### ${path}`) || pack.includes(`### ${base}`);
+}
+function groundedAsk(question, pack) {
+    return [
+        SOURCE_FILES_LEAD,
+        pack,
+        `Question: ${question}`,
+        [
+            "Rules:",
+            "- Quote only identifiers that appear in SOURCE FILES.",
+            "- Copy exact lines and include the line numbers shown (N|...).",
+            "- If a name is not in SOURCE FILES, say it is not in the file. Do not invent example code.",
+            "- Ignore earlier assistant messages if they conflict with SOURCE FILES.",
+        ].join("\n"),
+    ].join("\n\n");
+}
+function isGroundedAsk(msg) {
+    return msg?.role === "user" && typeof msg.content === "string" && msg.content.startsWith(SOURCE_FILES_LEAD);
+}
+function ensureGroundedAsk(messages, question, pack) {
+    if (pack.length === 0) {
+        return;
+    }
+    const content = groundedAsk(question, pack);
+    const last = messages[messages.length - 1];
+    if (isGroundedAsk(last)) {
+        messages[messages.length - 1] = { role: "user", content };
+        return;
+    }
+    messages.push({ role: "user", content });
+}
+function inventedDefs(answer, pack) {
+    if (pack.length === 0 || answer.trim().length === 0) {
+        return [];
+    }
+    const names = [...answer.matchAll(/\b(?:def|class)\s+([A-Za-z_]\w*)/g)].map((m) => m[1]);
+    return [...new Set(names)].filter((name) => name.length > 2 && !pack.includes(name));
+}
+function toolGuidance(mode, xml, userText, filePack) {
+    const named = mentionedPaths(userText);
+    const missing = named.filter((p) => !packHasPath(filePack, p));
+    const core = xml
+        ? xmlToolSystem(mode)
+        : "You have workspace tools. Call them yourself — never tell the user to type a tool name.";
+    if (missing.length > 0) {
+        return `${core}\nCall read_file once each for: ${missing.join(", ")}. Then answer from the contents. ${ANSWER_FROM_FILES}`;
+    }
+    if (filePack.length > 0) {
+        return `${core}\nThe files are already attached. Do not call read_file again unless a newly named path is missing. ${ANSWER_FROM_FILES}`;
+    }
+    const namedBit = named.length > 0
+        ? `The user named: ${named.join(", ")}. Call read_file once per path, then answer.`
+        : "If the question is about workspace code, call read_file (or glob/grep if the path is unknown), then answer.";
+    return `${core}\n${namedBit} Do not call list_dir first. After tool results, stop calling tools. ${ANSWER_FROM_FILES}`;
+}
+function mentionedPaths(text) {
+    const found = [];
+    const re = /(?:^|[\s`'"(])((?:\.\.?\/)?(?:[\w.-]+\/)+[\w.-]+|(?:\.\.?\/)?[\w.-]+\.[A-Za-z][\w.-]*)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        const p = m[1];
+        if (!found.includes(p)) {
+            found.push(p);
+        }
+    }
+    return found.slice(0, 8);
+}
+function systemPrompt(mode, xml, memoryDigest, skillsDigest, userText = "", filePack = "") {
     const lines = [
         `You are a coding assistant. Working directory: ${process.cwd()}. Mode: ${mode}.`,
         "Use Markdown: headings, lists, fenced code.",
@@ -18,23 +135,32 @@ function systemPrompt(mode, xml, memoryDigest, skillsDigest) {
     if (mode !== "Agent") {
         lines.push("You may read files. Do not write files or run shell commands.");
     }
-    if (xml) {
-        lines.push(xmlToolSystem(mode));
-    }
-    else {
-        lines.push("Call tools when you need the workspace. Prefer list_dir or glob to list files.");
-    }
+    lines.push(toolGuidance(mode, xml, userText, filePack));
     if (skillsDigest.trim().length > 0) {
         lines.push(skillsDigest);
     }
     if (memoryDigest.trim().length > 0) {
         lines.push(`Persistent memory from prior sessions:\n${memoryDigest}`);
     }
+    lines.push(ANSWER_FROM_FILES);
+    if (filePack.trim().length > 0) {
+        lines.push("File contents are in the latest user message labeled SOURCE FILES. Quote only that text. Do not invent methods, line numbers, or example classes.");
+    }
     return lines.join("\n\n");
 }
+function lastUserText(rows) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+        const row = rows[i];
+        if (row.kind === "user") {
+            return row.text;
+        }
+    }
+    return "";
+}
 function historyMessages(rows, mode, xml, memoryDigest, skillsDigest) {
+    const pack = filePackFromRows(rows);
     const out = [
-        { role: "system", content: systemPrompt(mode, xml, memoryDigest, skillsDigest) },
+        { role: "system", content: systemPrompt(mode, xml, memoryDigest, skillsDigest, lastUserText(rows), pack) },
     ];
     for (const row of rows) {
         if (row.kind === "user") {
@@ -44,7 +170,36 @@ function historyMessages(rows, mode, xml, memoryDigest, skillsDigest) {
             out.push({ role: "assistant", content: row.text });
         }
     }
+    if (pack.length > 0) {
+        out.push({ role: "user", content: groundedAsk(lastUserText(rows), pack) });
+    }
     return out;
+}
+function toolKey(call) {
+    try {
+        const o = JSON.parse(call.arguments || "{}");
+        if (call.name === "read_file" || call.name === "list_dir") {
+            const path = String(o.path ?? "")
+                .replace(/\\/g, "/")
+                .replace(/^\.\//, "")
+                .trim();
+            return `${call.name}:${path}`;
+        }
+        return `${call.name}:${JSON.stringify(o)}`;
+    }
+    catch {
+        return `${call.name}:${call.arguments}`;
+    }
+}
+function isPlaceholderCall(call) {
+    try {
+        const o = JSON.parse(call.arguments || "{}");
+        const path = String(o.path ?? "").trim();
+        return path.length === 0 || path === "PATH" || path === "src/example.ts" || path === "__PATH__";
+    }
+    catch {
+        return false;
+    }
 }
 function shortArgs(raw) {
     try {
@@ -149,18 +304,28 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
             : row));
         args.hooks.setUsage({ prompt: promptEst, completion, total: promptEst + completion }, true);
     };
+    const seenTools = new Set();
+    let filesLoaded = false;
+    let nudgedToAnswer = false;
+    let groundingRetry = false;
     for (let iter = 0; iter < MAX_ITERS; iter++) {
         if (args.signal.aborted) {
             return;
         }
         const useXml = xmlByServer.get(entry.baseURL) === true;
-        if (useXml && messages[0]) {
+        const liveRows = args.hooks.getRows();
+        const filePack = filePackFromRows(liveRows);
+        const userText = lastUserText(liveRows);
+        const missing = mentionedPaths(userText).filter((p) => !packHasPath(filePack, p));
+        if (messages[0]) {
             messages[0] = {
                 role: "system",
-                content: systemPrompt(args.mode, true, memoryDigest, skillsDigest),
+                content: systemPrompt(args.mode, useXml, memoryDigest, skillsDigest, userText, filePack),
             };
         }
-        // Mid-loop watchdog (after tool results grow the prompt)
+        if (filePack.length > 0) {
+            ensureGroundedAsk(messages, userText, filePack);
+        }
         promptEst = estimatePrompt(messages);
         if (shouldCompact({
             promptTokens: promptEst,
@@ -175,6 +340,9 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
                 outText = "";
             }
         }
+        const toolsOff = nudgedToAnswer ||
+            groundingRetry ||
+            (missing.length === 0 && (filesLoaded || filePack.length > 0));
         let result;
         try {
             result = await streamChat({
@@ -182,7 +350,8 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
                 apiKey: entry.apiKey,
                 model: entry.model,
                 messages,
-                tools: useXml ? undefined : openaiTools(args.mode),
+                tools: useXml || toolsOff ? undefined : openaiTools(args.mode),
+                toolChoice: !useXml && toolsOff ? "none" : undefined,
                 signal: args.signal,
                 onDelta,
                 onUsage: (usage) => {
@@ -210,27 +379,62 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
         const nativeCalls = result.toolCalls;
         let calls = nativeCalls;
         if (calls.length === 0) {
-            calls = parseXmlToolCalls(result.text);
+            calls = parseXmlToolCalls(result.text).filter((c) => !isPlaceholderCall(c));
             if (calls.length > 0) {
                 const cleaned = stripXmlToolCalls(result.text);
                 args.hooks.patchRows((rows) => rows.map((row) => row.id === args.asstId && row.kind === "assistant" ? { ...row, text: cleaned } : row));
                 outText = cleaned;
             }
         }
-        if (calls.length === 0) {
+        const fresh = calls.filter((c) => !isPlaceholderCall(c) && !seenTools.has(toolKey(c)));
+        if (fresh.length === 0) {
+            if (calls.length > 0 && !nudgedToAnswer) {
+                nudgedToAnswer = true;
+                filesLoaded = true;
+                const pack = filePackFromRows(args.hooks.getRows());
+                if (pack.length > 0) {
+                    ensureGroundedAsk(messages, userText, pack);
+                }
+                else {
+                    messages.push({
+                        role: "user",
+                        content: "Those files are already in the tool results above. Answer from that source. If asked to show a method, paste it in a markdown code fence. Do not say only that a file was read.",
+                    });
+                }
+                continue;
+            }
+            const pack = filePackFromRows(args.hooks.getRows());
+            const invented = inventedDefs(result.text, pack);
+            if (pack.length > 0 && invented.length > 0 && !groundingRetry) {
+                groundingRetry = true;
+                messages.push({ role: "assistant", content: result.text });
+                messages.push({
+                    role: "user",
+                    content: [
+                        `Stop. These names do not appear in SOURCE FILES: ${invented.join(", ")}.`,
+                        "Quote only functions/classes that appear in the attached files, with their line numbers.",
+                        "If the user asked for something that is not there, say it does not exist.",
+                        "Do not invent example or placeholder code.",
+                    ].join(" "),
+                });
+                outText = "";
+                args.hooks.patchRows((rows) => rows.map((row) => row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row));
+                continue;
+            }
             return;
         }
         const xmlResults = nativeCalls.length === 0;
         messages.push({
             role: "assistant",
             content: xmlResults ? stripXmlToolCalls(result.text) : result.text,
-            tool_calls: xmlResults ? undefined : calls,
+            tool_calls: xmlResults ? undefined : fresh,
         });
         const resultChunks = [];
-        for (const call of calls) {
+        for (const call of fresh) {
             if (args.signal.aborted) {
                 return;
             }
+            seenTools.add(toolKey(call));
             let parsed = {};
             try {
                 parsed = JSON.parse(call.arguments || "{}");
@@ -289,12 +493,24 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
                     ...asst,
                 ];
             });
+            let toolPath;
+            try {
+                const o = JSON.parse(call.arguments || "{}");
+                if (typeof o.path === "string" && o.path.length > 0) {
+                    toolPath = o.path;
+                }
+            }
+            catch {
+                toolPath = undefined;
+            }
             const exec = await executeTool(call.name, call.arguments, args.mode);
             args.hooks.patchRows((rows) => rows.map((row) => row.id === toolId && row.kind === "tool"
                 ? {
                     ...row,
                     status: exec.ok ? "done" : "error",
                     detail: exec.detail ?? exec.text.slice(0, 80),
+                    path: toolPath,
+                    output: call.name === "read_file" && exec.ok ? exec.text.slice(0, FILE_PACK_EACH) : row.output,
                 }
                 : row));
             const body = exec.text.slice(0, 24_000);
@@ -303,12 +519,22 @@ async function runAgentTurnLocked(args, entry, leaseCtl) {
                 messages.push({ role: "tool", tool_call_id: call.id, content: body });
             }
         }
+        const packAfterTools = filePackFromRows(args.hooks.getRows());
         if (xmlResults) {
-            messages.push({
-                role: "user",
-                content: `Tool results:\n${resultChunks.join("\n---\n")}`,
-            });
+            if (packAfterTools.length > 0) {
+                ensureGroundedAsk(messages, userText, packAfterTools);
+            }
+            else {
+                messages.push({
+                    role: "user",
+                    content: `Tool results:\n${resultChunks.join("\n---\n")}\n\n${ANSWER_FROM_FILES}`,
+                });
+            }
         }
+        else {
+            ensureGroundedAsk(messages, userText, packAfterTools);
+        }
+        filesLoaded = filesLoaded || fresh.some((c) => c.name === "read_file");
         outText = "";
         args.hooks.patchRows((rows) => rows.map((row) => row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row));
     }

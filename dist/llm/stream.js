@@ -66,6 +66,7 @@ export async function streamChat(args) {
         }
         return { role: m.role, content: m.content };
     });
+    let idleTimer;
     try {
         const body = {
             model: args.model,
@@ -74,6 +75,9 @@ export async function streamChat(args) {
         };
         if (args.tools && args.tools.length > 0) {
             body.tools = args.tools;
+            if (args.toolChoice) {
+                body.tool_choice = args.toolChoice;
+            }
         }
         let stream;
         try {
@@ -100,7 +104,18 @@ export async function streamChat(args) {
         clearTimeout(connectTimer);
         let text = "";
         const acc = new Map();
+        const IDLE_MS = 90_000;
+        const bumpIdle = () => {
+            if (idleTimer) {
+                clearTimeout(idleTimer);
+            }
+            idleTimer = setTimeout(() => {
+                ac.abort();
+            }, IDLE_MS);
+        };
+        bumpIdle();
         for await (const chunk of stream) {
+            bumpIdle();
             if (args.signal?.aborted) {
                 break;
             }
@@ -147,6 +162,9 @@ export async function streamChat(args) {
         return { text, toolCalls };
     }
     finally {
+        if (idleTimer) {
+            clearTimeout(idleTimer);
+        }
         clearTimeout(connectTimer);
         args.signal?.removeEventListener("abort", onUserAbort);
     }

@@ -1,4 +1,4 @@
-import { Box, Text } from "ink";
+import { Box, Text, useStdout } from "ink";
 import { listSkills } from "../skills/load.js";
 
 export type SlashCommand = {
@@ -172,6 +172,24 @@ export function splitInlineSlash(text: string): { command: string; rest: string 
   return { command: last.command, rest };
 }
 
+const LABEL_COLS = 24;
+
+function truncateDesc(text: string, max: number): string {
+  const n = text.trim();
+  if (n.length === 0 || max <= 0) return "";
+  if (n.length <= max) return n;
+  const words = n.split(/\s+/);
+  let out = "";
+  for (const word of words) {
+    const next = out.length === 0 ? word : `${out} ${word}`;
+    if (next.length + 1 > max) {
+      return out.length > 0 ? `${out}…` : `${word.slice(0, Math.max(0, max - 1))}…`;
+    }
+    out = next;
+  }
+  return out;
+}
+
 export function SlashPalette({
   matches,
   selected,
@@ -179,28 +197,47 @@ export function SlashPalette({
   matches: SlashCommand[];
   selected: number;
 }) {
+  const { stdout } = useStdout();
+  const width = stdout.columns;
+
   if (matches.length === 0) {
     return (
-      <Box paddingX={1}>
-        <Text dimColor italic>
-          No matching commands
-        </Text>
+      <Box paddingX={2} flexDirection="column">
+        <Box paddingLeft={3}>
+          <Text dimColor>No matches</Text>
+        </Box>
       </Box>
     );
   }
 
   return (
-    <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="gray">
+    <Box flexDirection="column" paddingX={2}>
       {matches.map((cmd, i) => {
         const active = i === selected;
+        const descBudget = Math.max(0, width - 4 - 3 - LABEL_COLS - 2);
         return (
-          <Box key={cmd.name}>
-            <Text inverse={active}>{cmd.name}</Text>
-            <Text dimColor>
-              {"  "}
-              {cmd.summary}
-              {cmd.implemented ? "" : "  (not implemented)"}
-            </Text>
+          <Box key={cmd.name} width="100%" flexDirection="row" alignItems="center">
+            <Box width={1} backgroundColor={active ? "cyan" : undefined}>
+              <Text> </Text>
+            </Box>
+            <Box width={2}>
+              <Text color={active ? "cyan" : undefined} dimColor={!active}>
+                {active ? "→ " : "  "}
+              </Text>
+            </Box>
+            <Box width={LABEL_COLS} marginRight={2}>
+              <Text bold={active} dimColor={!active} wrap="truncate">
+                {cmd.name}
+              </Text>
+            </Box>
+            <Box flexGrow={1}>
+              <Text bold={active} dimColor={!active} wrap="truncate">
+                {truncateDesc(
+                  `${cmd.summary}${cmd.implemented ? "" : "  (not implemented)"}`,
+                  descBudget,
+                )}
+              </Text>
+            </Box>
           </Box>
         );
       })}

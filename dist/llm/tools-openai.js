@@ -3,7 +3,7 @@ const READ_TOOLS = [
         type: "function",
         function: {
             name: "read_file",
-            description: "Read a file in the workspace.",
+            description: "Read a file in the workspace. Use this when the user names a path or asks you to look at code. Do not list the directory first.",
             parameters: {
                 type: "object",
                 properties: { path: { type: "string" } },
@@ -15,7 +15,7 @@ const READ_TOOLS = [
         type: "function",
         function: {
             name: "list_dir",
-            description: "List a directory.",
+            description: "List a directory only when you do not know which file to open.",
             parameters: {
                 type: "object",
                 properties: { path: { type: "string", description: "Directory path, default ." } },

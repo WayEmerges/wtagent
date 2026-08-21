@@ -26,6 +26,7 @@ export declare function streamChat(args: {
     model: string;
     messages: ChatMessage[];
     tools?: ChatCompletionTool[];
+    toolChoice?: "auto" | "none";
     onDelta: (text: string) => void;
     onUsage?: (usage: TokenUsage) => void;
     signal?: AbortSignal;

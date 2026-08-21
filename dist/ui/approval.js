@@ -6,6 +6,6 @@ export function ApprovalCard() {
     if (!pending) {
         return null;
     }
-    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, paddingX: 1, borderStyle: "single", borderColor: "yellow", children: [_jsx(Text, { color: "yellow", children: "run_shell" }), _jsx(Text, { children: pending.command }), _jsx(Text, { dimColor: true, children: "[y] allow  [n] deny  [s] allow for this session" })] }));
+    return (_jsxs(Box, { flexDirection: "column", marginTop: 1, marginX: 1, borderStyle: "round", borderColor: "yellow", paddingX: 2, paddingY: 1, children: [_jsx(Text, { color: "yellow", children: "run_shell" }), _jsx(Text, { children: pending.command }), _jsx(Text, { dimColor: true, children: "[y] allow  [n] deny  [s] allow for this session" })] }));
 }
 //# sourceMappingURL=approval.js.map

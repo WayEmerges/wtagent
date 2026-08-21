@@ -1,6 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { execSync } from "node:child_process";
-import { basename } from "node:path";
+import { homedir } from "node:os";
 import { Box, Text, useStdout } from "ink";
 import { memo, useMemo } from "react";
 import { useStore } from "../state/store.js";
@@ -32,6 +32,13 @@ function formatCount(n) {
     }
     return String(n);
 }
+function displayPath(cwd) {
+    const home = homedir();
+    if (cwd.startsWith(home)) {
+        return `~${cwd.slice(home.length)}`;
+    }
+    return cwd;
+}
 export const Footer = memo(function Footer() {
     const { stdout } = useStdout();
     const mode = useStore((s) => s.mode);
@@ -41,7 +48,7 @@ export const Footer = memo(function Footer() {
     const usage = useStore((s) => s.usage);
     const usageApprox = useStore((s) => s.usageApprox);
     const cwd = process.cwd();
-    const dir = basename(cwd);
+    const pathLabel = displayPath(cwd);
     const branch = useMemo(() => gitBranch(cwd), [cwd]);
     const modeColor = mode === "Plan" ? "yellow" : mode === "Ask" ? "blue" : undefined;
     const effectiveKey = modelKey === "auto" && resolvedModelKey ? resolvedModelKey : modelKey;
@@ -68,6 +75,6 @@ export const Footer = memo(function Footer() {
         : stdout.columns < 90
             ? label
             : `${modelKey} · ${label}`;
-    return (_jsxs(Box, { paddingLeft: 3, children: [_jsx(Text, { color: modeColor, children: mode }), _jsxs(Text, { dimColor: true, children: [" · ", modelShown, tokenBit ? ` · ${tokenBit}` : "", " · ", dir, branch ? ` · ${branch}` : ""] })] }));
+    return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginRight: 1, marginTop: 0, children: [_jsxs(Box, { flexDirection: "row", flexShrink: 1, children: [_jsx(Text, { color: modeColor, children: mode }), _jsx(Text, { dimColor: true, children: " \u00B7 " }), _jsx(Text, { dimColor: true, children: modelShown }), tokenBit ? _jsx(Text, { dimColor: true, children: ` · ${tokenBit}` }) : null] }), _jsx(Box, { children: _jsxs(Text, { dimColor: true, children: [pathLabel, branch ? ` · ${branch}` : ""] }) })] }));
 });
 //# sourceMappingURL=footer.js.map

@@ -4,7 +4,7 @@ import { friendlyLlmError } from "../llm/stream.js";
 import { runAgentTurn } from "../llm/turn.js";
 import { compactSession, summarizerModelKey } from "../memory/compact.js";
 import { routeTurn } from "../orchestrator/route.js";
-import { ensureUserSkills, handleSkillsCommand, readSkillState, } from "../skills/load.js";
+import { ensureUserSkills, getSkill, handleSkillsCommand, readSkillState, } from "../skills/load.js";
 import { latestSession, listSessions, newSessionId, persistTurn, readSession, } from "../sessions/store.js";
 import { copyText } from "../ui/clipboard.js";
 import { SLASH_COMMANDS } from "../ui/slash-palette.js";
@@ -434,8 +434,20 @@ export const useStore = create((set, get) => ({
                     get().addError(msg);
                 }
                 return;
-            default:
+            default: {
+                const id = token.replace(/^\//, "");
+                if (id && getSkill(id)) {
+                    try {
+                        get().addNotice(handleSkillsCommand(`/skill ${id} toggle`));
+                    }
+                    catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        get().addError(msg);
+                    }
+                    return;
+                }
                 get().addNotice(`${token || trimmed} is not implemented`);
+            }
         }
     },
 }));

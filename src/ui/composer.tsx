@@ -23,14 +23,14 @@ import {
   wordRight,
   type Draft,
 } from "./draft.js";
+import { PromptChrome, PROMPT_BG } from "./chrome.js";
 import { ModelPicker } from "./model-picker.js";
 import { SessionPicker } from "./session-picker.js";
 import { filterSlash, SlashPalette, SLASH_COMMANDS, SLASH_HOLD_REST, slashTokenAt, splitInlineSlash } from "./slash-palette.js";
 
-const MIN_INNER_LINES = 3;
-const GLYPH = " → ";
-const CONT = "   ";
-const COMPOSER_BG = "#1f1f1f";
+/** Match Cursor prompt-bar visible window (constants V1). */
+const MAX_INNER_LINES = 6;
+const PROMPT_SYMBOL = "→";
 
 function CaretText({
   text,
@@ -58,9 +58,7 @@ function CaretText({
     return (
       <Text wrap="truncate">
         {before}
-        <Text backgroundColor="white" color="black">
-          {at}
-        </Text>
+        <Text inverse>{at}</Text>
         {after}
       </Text>
     );
@@ -79,7 +77,7 @@ function CaretText({
         run.kind === "plain" ? (
           <Text key={ri}>{run.text}</Text>
         ) : (
-          <Text key={ri} backgroundColor="white" color="black">
+          <Text key={ri} inverse>
             {run.text}
           </Text>
         ),
@@ -124,9 +122,7 @@ function Placeholder({ text, caret }: { text: string; caret: boolean }) {
   }
   return (
     <Text wrap="truncate">
-      <Text backgroundColor="white" color="black">
-        {text.slice(0, 1)}
-      </Text>
+      <Text inverse>{text.slice(0, 1)}</Text>
       <Text dimColor>{text.slice(1)}</Text>
     </Text>
   );
@@ -143,9 +139,11 @@ export function Composer() {
   const [draft, setDraftState] = useState<Draft>({ value: "", cursor: 0, selAnchor: null });
   const { value, cursor, selAnchor } = draft;
   const width = stdout.columns;
-  const boxWidth = Math.max(20, width - 4);
-  const innerWidth = Math.max(8, boxWidth - 4 - GLYPH.length);
-  const placeholder = width < 80 ? "Ask a question..." : "Enter a command or ask a question...";
+  const boxWidth = Math.max(20, width - 2);
+  // paddingLeft(1) + "→ " (2) — text column matches Cursor prompt-bar.
+  const innerWidth = Math.max(8, boxWidth - 1 - 2);
+  const hasTranscript = useStore((s) => s.rows.some((r) => r.kind === "user" || r.kind === "assistant"));
+  const placeholder = hasTranscript ? "Add a follow-up" : "Plan, search, build anything";
 
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -639,7 +637,7 @@ export function Composer() {
   const showPlaceholder = value.length === 0;
   const allLines = showPlaceholder ? [{ text: placeholder, start: 0 }] : layoutLines(value, innerWidth);
   const cursorLine = showPlaceholder ? 0 : lineIndexForCursor(allLines, cursor, value.length);
-  const boxHeight = MIN_INNER_LINES;
+  const boxHeight = Math.min(MAX_INNER_LINES, Math.max(1, allLines.length));
   let start = Math.max(0, allLines.length - boxHeight);
   if (cursorLine < start) {
     start = cursorLine;
@@ -648,13 +646,11 @@ export function Composer() {
     start = cursorLine - boxHeight + 1;
   }
   const visible = allLines.slice(start, start + boxHeight);
-  const extra = boxHeight - visible.length;
-  const padTop = Math.floor(extra / 2);
-  const padBottom = extra - padTop;
   const selection = selRange({ value, cursor, selAnchor });
+  const symbolDim = showPlaceholder;
 
   return (
-    <Box flexDirection="column" width={width} marginTop={1} marginBottom={1} flexShrink={0}>
+    <Box flexDirection="column" width={width} marginTop={0} marginBottom={0} flexShrink={0}>
       {sessionPickerOpen ? (
         <SessionPicker sessions={sessions} selected={pickerIndex} />
       ) : modelPickerOpen ? (
@@ -662,53 +658,35 @@ export function Composer() {
       ) : paletteOpen ? (
         <SlashPalette matches={matches} selected={Math.min(paletteIndex, Math.max(0, matches.length - 1))} />
       ) : null}
-      <Box
-        flexDirection="column"
-        width={boxWidth}
-        height={boxHeight + 2}
-        flexShrink={0}
-        marginLeft={0}
-        marginRight={4}
-        paddingX={1}
-        paddingY={0}
-        borderStyle="round"
-        borderColor="white"
-        justifyContent="flex-start"
-        alignItems="flex-start"
-        backgroundColor={COMPOSER_BG}
-      >
-        {Array.from({ length: padTop }, (_, i) => (
-          <Text key={`pad-top-${i}`}> </Text>
-        ))}
-        {visible.map((line, i) => {
-          const abs = start + i;
-          const glyph = abs === 0 ? GLYPH : CONT;
-          const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
-
-          return (
-            <Box key={`line-${abs}`} width={innerWidth + GLYPH.length} flexShrink={0}>
-              <Box width={GLYPH.length} flexShrink={0}>
-                <Text>{glyph}</Text>
-              </Box>
-              {showPlaceholder ? (
-                <Placeholder text={line.text} caret={focused} />
-              ) : (
-                <CaretText
-                  text={line.text}
-                  col={Math.max(0, cursor - line.start)}
-                  lineStart={line.start}
-                  selStart={selection.start}
-                  selEnd={selection.end}
-                  showCaret={onCaretLine}
-                />
-              )}
-            </Box>
-          );
-        })}
-        {Array.from({ length: padBottom }, (_, i) => (
-          <Text key={`pad-bot-${i}`}> </Text>
-        ))}
-      </Box>
+      <PromptChrome backgroundColor={PROMPT_BG} width={boxWidth}>
+        <Box flexDirection="row" width="100%">
+          <Box flexShrink={0}>
+            <Text dimColor={symbolDim}>{PROMPT_SYMBOL} </Text>
+          </Box>
+          <Box flexDirection="column" flexGrow={1}>
+            {visible.map((line, i) => {
+              const abs = start + i;
+              const onCaretLine = !showPlaceholder && focused && abs === cursorLine;
+              return (
+                <Box key={`line-${abs}`} width={innerWidth} flexShrink={0}>
+                  {showPlaceholder ? (
+                    <Placeholder text={line.text} caret={focused} />
+                  ) : (
+                    <CaretText
+                      text={line.text}
+                      col={Math.max(0, cursor - line.start)}
+                      lineStart={line.start}
+                      selStart={selection.start}
+                      selEnd={selection.end}
+                      showCaret={onCaretLine}
+                    />
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        </Box>
+      </PromptChrome>
     </Box>
   );
 }
