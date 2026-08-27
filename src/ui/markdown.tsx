@@ -1,4 +1,4 @@
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { marked, type Token, type Tokens } from "marked";
 
 type Run = { text: string; bold?: boolean; italic?: boolean; code?: boolean };
@@ -288,8 +288,8 @@ function closeOpenFence(src: string): string {
 }
 
 export function MarkdownView({ text }: { text: string }) {
-  const { stdout } = useStdout();
-  const width = Math.max(24, stdout.columns - 8);
+  const { columns } = useWindowSize();
+  const width = Math.max(24, columns - 8);
   let tokens: Token[] = [];
   try {
     tokens = marked.lexer(closeOpenFence(text), { gfm: true });

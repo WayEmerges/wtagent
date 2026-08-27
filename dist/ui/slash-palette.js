@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { listSkills } from "../skills/load.js";
 export const SLASH_COMMANDS = [
     { name: "/help", summary: "Show commands", implemented: true },
@@ -176,8 +176,7 @@ function truncateDesc(text, max) {
     return out;
 }
 export function SlashPalette({ matches, selected, }) {
-    const { stdout } = useStdout();
-    const width = stdout.columns;
+    const { columns: width } = useWindowSize();
     if (matches.length === 0) {
         return (_jsx(Box, { paddingX: 2, flexDirection: "column", children: _jsx(Box, { paddingLeft: 3, children: _jsx(Text, { dimColor: true, children: "No matches" }) }) }));
     }

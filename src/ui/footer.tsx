@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { memo, useMemo } from "react";
 import { useStore } from "../state/store.js";
 import type { AgentMode } from "../state/session.js";
@@ -46,7 +46,7 @@ function displayPath(cwd: string): string {
 }
 
 export const Footer = memo(function Footer() {
-  const { stdout } = useStdout();
+  const { columns } = useWindowSize();
   const mode = useStore((s) => s.mode);
   const modelKey = useStore((s) => s.modelKey);
   const resolvedModelKey = useStore((s) => s.resolvedModelKey);
@@ -77,11 +77,11 @@ export const Footer = memo(function Footer() {
   const modelShown =
     modelKey === "auto"
       ? resolvedModelKey
-        ? stdout.columns < 90
+        ? columns < 90
           ? `auto→${resolvedModelKey}`
           : `auto → ${resolvedModelKey} · ${label}`
         : "auto"
-      : stdout.columns < 90
+      : columns < 90
         ? label
         : `${modelKey} · ${label}`;
 

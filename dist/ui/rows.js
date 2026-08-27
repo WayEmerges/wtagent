@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { useEffect, useState } from "react";
 import { USER_MSG_BG } from "./chrome.js";
 import { MarkdownView } from "./markdown.js";
@@ -18,8 +18,7 @@ export function SpinnerGlyph() {
     return _jsx(Text, { color: "cyan", children: SPINNER_FRAMES[i] });
 }
 function UserPromptBox({ text }) {
-    const { stdout } = useStdout();
-    const width = stdout.columns;
+    const { columns: width } = useWindowSize();
     const boxWidth = Math.max(20, width - 2);
     const inner = Math.max(8, boxWidth - 1 - 5);
     const lines = wrapWords(text, inner);

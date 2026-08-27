@@ -6,7 +6,7 @@ import { RowView, SpinnerGlyph } from "./rows.js";
 function SettledBlock({ row }) {
     return (_jsxs(Box, { flexDirection: "column", children: [row.kind === "assistant" || row.kind === "error" ? _jsx(Text, { children: " " }) : null, row.kind === "assistant" ? _jsx(Text, { children: " " }) : null, _jsx(RowView, { row: row }), row.kind === "user" ? (_jsxs(_Fragment, { children: [_jsx(Text, { children: " " }), _jsx(Text, { children: " " })] })) : (_jsx(Text, { children: " " }))] }));
 }
-export const Transcript = memo(function Transcript() {
+export const Transcript = memo(function Transcript({ layoutKey = 0 }) {
     const rows = useStore((s) => s.rows);
     const streamingId = useStore((s) => s.streamingId);
     const settled = rows.filter((row) => {
@@ -19,7 +19,7 @@ export const Transcript = memo(function Transcript() {
         return true;
     });
     const live = rows.filter((row) => row.id === streamingId || (row.kind === "tool" && row.status === "running"));
-    return (_jsxs(Box, { flexDirection: "column", children: [_jsx(Static, { items: settled, children: (row) => (_jsx(Box, { children: _jsx(SettledBlock, { row: row }) }, row.id)) }), live.map((row) => row.kind === "assistant" && row.text.length === 0 ? null : (_jsx(Box, { flexDirection: "column", children: _jsx(RowView, { row: row }) }, row.id)))] }));
+    return (_jsxs(Box, { flexDirection: "column", children: [_jsx(Static, { items: settled, children: (row) => (_jsx(Box, { children: _jsx(SettledBlock, { row: row }) }, `${layoutKey}:${row.id}`)) }, layoutKey), live.map((row) => row.kind === "assistant" && row.text.length === 0 ? null : (_jsx(Box, { flexDirection: "column", children: _jsx(RowView, { row: row }) }, row.id)))] }));
 });
 export const ActivityLine = memo(function ActivityLine() {
     const streaming = useStore((s) => s.streamingId !== null);

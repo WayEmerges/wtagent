@@ -21,7 +21,7 @@ function SettledBlock({ row }: { row: TranscriptRow }) {
   );
 }
 
-export const Transcript = memo(function Transcript() {
+export const Transcript = memo(function Transcript({ layoutKey = 0 }: { layoutKey?: number }) {
   const rows = useStore((s) => s.rows);
   const streamingId = useStore((s) => s.streamingId);
   const settled = rows.filter((row) => {
@@ -40,9 +40,9 @@ export const Transcript = memo(function Transcript() {
 
   return (
     <Box flexDirection="column">
-      <Static items={settled}>
+      <Static key={layoutKey} items={settled}>
         {(row) => (
-          <Box key={row.id}>
+          <Box key={`${layoutKey}:${row.id}`}>
             <SettledBlock row={row} />
           </Box>
         )}

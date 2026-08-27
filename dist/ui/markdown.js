@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { marked } from "marked";
 function sameStyle(a, b) {
     return a.bold === b.bold && a.italic === b.italic && a.code === b.code;
@@ -205,8 +205,8 @@ function closeOpenFence(src) {
     return src;
 }
 export function MarkdownView({ text }) {
-    const { stdout } = useStdout();
-    const width = Math.max(24, stdout.columns - 8);
+    const { columns } = useWindowSize();
+    const width = Math.max(24, columns - 8);
     let tokens = [];
     try {
         tokens = marked.lexer(closeOpenFence(text), { gfm: true });

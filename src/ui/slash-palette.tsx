@@ -1,4 +1,4 @@
-import { Box, Text, useStdout } from "ink";
+import { Box, Text, useWindowSize } from "ink";
 import { listSkills } from "../skills/load.js";
 
 export type SlashCommand = {
@@ -197,8 +197,7 @@ export function SlashPalette({
   matches: SlashCommand[];
   selected: number;
 }) {
-  const { stdout } = useStdout();
-  const width = stdout.columns;
+  const { columns: width } = useWindowSize();
 
   if (matches.length === 0) {
     return (

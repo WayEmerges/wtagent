@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { Box, Text, useApp, useInput, usePaste, useStdin, useStdout } from "ink";
+import { Box, Text, useApp, useInput, usePaste, useStdin, useStdout, useWindowSize } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { modelChoices } from "../config/load.js";
 import { listSessions } from "../sessions/store.js";
@@ -68,11 +68,10 @@ function isFocusNoise(input) {
 }
 export function Composer() {
     const { exit } = useApp();
-    const { stdout } = useStdout();
+    const { columns: width } = useWindowSize();
     const focused = useTerminalFocus();
     const [draft, setDraftState] = useState({ value: "", cursor: 0, selAnchor: null });
     const { value, cursor, selAnchor } = draft;
-    const width = stdout.columns;
     const boxWidth = Math.max(20, width - 2);
     // paddingLeft(1) + "→ " (2) — text column matches Cursor prompt-bar.
     const innerWidth = Math.max(8, boxWidth - 1 - 2);
