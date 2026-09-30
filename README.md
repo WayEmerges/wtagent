@@ -76,10 +76,11 @@ Force with `/compact`. Set a low `contextLength` or `memory.threshold` to test.
 
 ### Skills (prompt packs)
 
-Toggleable instruction packs injected into the system prompt. Bundled **caveman** = terse replies.
+Toggleable instruction packs injected into the system prompt. Bundled **caveman** = terse replies; **coding-agent** = autonomous tool-use habits.
 
 ```text
 /skill list
+/skill on coding-agent
 /caveman          # on (full)
 /caveman lite|full|ultra
 /caveman off
@@ -87,6 +88,24 @@ Toggleable instruction packs injected into the system prompt. Bundled **caveman*
 ```
 
 Add your own: `~/.waytech-agent/skills/<id>.md` then `/skill on <id>`. Active skills persist in `~/.waytech-agent/state.json`.
+
+### Agent tools (v0.3)
+
+`read_file`, `list_dir`, `grep`, `glob`, `webfetch`, `web_search`, `read_lints`, `todo_write`, `await_shell`, `write_file`, `edit_file`, `delete_file`, `edit_notebook`, `run_shell`, `switch_mode`, `task`, plus MCP tools from `mcpServers` in config. Transcript tool cards collapse long output — **ctrl+o** expands the last tool result.
+
+Configure search in config:
+
+```json
+"webSearch": { "provider": "brave", "apiKey": "..." }
+```
+
+MCP stdio servers:
+
+```json
+"mcpServers": {
+  "example": { "command": "npx", "args": ["-y", "some-mcp-server"] }
+}
+```
 
 ## Config example
 

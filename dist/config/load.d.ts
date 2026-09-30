@@ -32,6 +32,16 @@ export type MemoryConfig = {
     summarizer?: string;
     injectChars: number;
 };
+export type WebSearchConfig = {
+    provider: "none" | "brave" | "tavily";
+    apiKey?: string;
+};
+export type McpServerConfig = {
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+};
 export type LoadedConfig = {
     path: string;
     missing: boolean;
@@ -40,6 +50,8 @@ export type LoadedConfig = {
     auto?: AutoConfig;
     lease: LeaseConfig;
     memory: MemoryConfig;
+    webSearch: WebSearchConfig;
+    mcpServers: Record<string, McpServerConfig>;
     models: Record<string, ModelEntry>;
     lastModel?: string;
 };

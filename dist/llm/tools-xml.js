@@ -1,15 +1,15 @@
 import { WRITE_TOOL_NAMES } from "./tools-openai.js";
 export function xmlToolSystem(mode) {
     const extra = mode === "Agent"
-        ? "You may also use write_file, edit_file, and run_shell."
-        : "Do not use write_file, edit_file, or run_shell. Do not edit files.";
+        ? "You may also use write_file, edit_file, delete_file, edit_notebook, run_shell, await_shell, switch_mode, and task."
+        : "Do not use write/edit/delete/shell/task tools. Do not edit files.";
     return `When you need a tool, output only this XML (no extra prose in the same turn):
 <tool_call>
 <name>read_file</name>
 <arg name="path">PATH</arg>
 </tool_call>
-Tools: read_file(path), list_dir(path), grep(pattern, path?), glob(pattern). ${extra}
-Call each tool at most once per path. After tool results, answer — do not emit another tool_call. Never tell the user to type a tool name.`;
+Tools: read_file(path, offset?, limit?), list_dir(path), grep(pattern, path?, context?, head_limit?), glob(pattern), webfetch(url, timeout?), web_search(search_term), read_lints(paths?), todo_write(todos, merge), await_shell(shell_id?, block_until_ms?, pattern?), fetch_mcp_resource(server, uri). ${extra}
+You may call multiple independent read/search tools in one turn. After tool results, continue or answer. Never tell the user to type a tool name.`;
 }
 export function parseXmlToolCalls(text) {
     const calls = [];
@@ -37,6 +37,9 @@ export function stripXmlToolCalls(text) {
     return text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "").trim();
 }
 export function allowTool(name, mode) {
+    if (name.startsWith("mcp__")) {
+        return true;
+    }
     if (WRITE_TOOL_NAMES.has(name) && mode !== "Agent") {
         return false;
     }

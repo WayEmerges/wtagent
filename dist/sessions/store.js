@@ -36,6 +36,12 @@ function parseRow(v) {
             detail: typeof o.detail === "string" ? o.detail : undefined,
             output: typeof o.output === "string" ? o.output : undefined,
             path: typeof o.path === "string" ? o.path : undefined,
+            summary: typeof o.summary === "string" ? o.summary : undefined,
+            added: typeof o.added === "number" ? o.added : undefined,
+            removed: typeof o.removed === "number" ? o.removed : undefined,
+            collapsedHint: typeof o.collapsedHint === "string" ? o.collapsedHint : undefined,
+            shellId: typeof o.shellId === "string" ? o.shellId : undefined,
+            expanded: false,
         };
     }
     return undefined;

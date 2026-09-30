@@ -15,6 +15,12 @@ export type TranscriptRow = {
     detail?: string;
     output?: string;
     path?: string;
+    summary?: string;
+    added?: number;
+    removed?: number;
+    collapsedHint?: string;
+    shellId?: string;
+    expanded?: boolean;
 } | {
     id: string;
     kind: "notice";

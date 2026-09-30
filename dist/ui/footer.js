@@ -47,6 +47,7 @@ export const Footer = memo(function Footer() {
     const config = useStore((s) => s.config);
     const usage = useStore((s) => s.usage);
     const usageApprox = useStore((s) => s.usageApprox);
+    const todos = useStore((s) => s.todos);
     const cwd = process.cwd();
     const pathLabel = displayPath(cwd);
     const branch = useMemo(() => gitBranch(cwd), [cwd]);
@@ -66,6 +67,13 @@ export const Footer = memo(function Footer() {
                 ? `${tilde}${formatCount(used)}/${formatCount(ctx)} ${pct}%`
                 : `${tilde}${formatCount(used)} tok`;
     }
+    const openTodos = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
+    const todoBit = openTodos.length > 0
+        ? `todos ${openTodos.length}: ${openTodos
+            .slice(0, 2)
+            .map((t) => t.content.slice(0, 24))
+            .join(" · ")}`
+        : "";
     const modelShown = modelKey === "auto"
         ? resolvedModelKey
             ? columns < 90
@@ -75,6 +83,6 @@ export const Footer = memo(function Footer() {
         : columns < 90
             ? label
             : `${modelKey} · ${label}`;
-    return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginRight: 1, marginTop: 0, children: [_jsxs(Box, { flexDirection: "row", flexShrink: 1, children: [_jsx(Text, { color: modeColor, children: mode }), _jsx(Text, { dimColor: true, children: " \u00B7 " }), _jsx(Text, { dimColor: true, children: modelShown }), tokenBit ? _jsx(Text, { dimColor: true, children: ` · ${tokenBit}` }) : null] }), _jsx(Box, { children: _jsxs(Text, { dimColor: true, children: [pathLabel, branch ? ` · ${branch}` : ""] }) })] }));
+    return (_jsxs(Box, { flexDirection: "column", marginLeft: 2, marginRight: 1, marginTop: 0, children: [_jsxs(Box, { flexDirection: "row", flexShrink: 1, children: [_jsx(Text, { color: modeColor, children: mode }), _jsx(Text, { dimColor: true, children: " \u00B7 " }), _jsx(Text, { dimColor: true, children: modelShown }), tokenBit ? _jsx(Text, { dimColor: true, children: ` · ${tokenBit}` }) : null] }), _jsx(Box, { children: _jsxs(Text, { dimColor: true, children: [pathLabel, branch ? ` · ${branch}` : ""] }) }), todoBit ? (_jsx(Box, { children: _jsx(Text, { dimColor: true, children: todoBit }) })) : null] }));
 });
 //# sourceMappingURL=footer.js.map

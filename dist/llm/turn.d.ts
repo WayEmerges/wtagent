@@ -1,5 +1,6 @@
 import type { LoadedConfig } from "../config/load.js";
 import type { AgentMode } from "../state/session.js";
+import type { TodoItem } from "../tools/todo.js";
 import type { TranscriptRow } from "../ui/rows.js";
 export type TurnHooks = {
     getRows: () => TranscriptRow[];
@@ -12,6 +13,8 @@ export type TurnHooks = {
     waitShell: (command: string) => Promise<"allow" | "deny" | "yolo">;
     yolo: () => boolean;
     setYolo: () => void;
+    setMode: (mode: AgentMode) => void;
+    onTodos: (items: TodoItem[]) => void;
 };
 export declare function runAgentTurn(args: {
     config: LoadedConfig;

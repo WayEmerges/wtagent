@@ -41,10 +41,39 @@ export const useStore = create((set, get) => ({
     usageApprox: false,
     yolo: false,
     pendingShell: null,
+    todos: [],
     cycleMode: () => {
         set((s) => {
             const i = AGENT_MODES.indexOf(s.mode);
             return { mode: AGENT_MODES[(i + 1) % AGENT_MODES.length] ?? "Agent" };
+        });
+    },
+    setMode: (mode) => {
+        set({ mode });
+    },
+    setTodos: (items) => {
+        set({ todos: items });
+    },
+    toggleExpandLastTool: () => {
+        set((s) => {
+            let lastIdx = -1;
+            for (let i = s.rows.length - 1; i >= 0; i--) {
+                const row = s.rows[i];
+                if (row.kind === "tool" && row.output && row.output.includes("\n")) {
+                    lastIdx = i;
+                    break;
+                }
+            }
+            if (lastIdx < 0) {
+                return s;
+            }
+            const rows = s.rows.map((row, i) => {
+                if (i !== lastIdx || row.kind !== "tool") {
+                    return row;
+                }
+                return { ...row, expanded: !row.expanded };
+            });
+            return { rows };
         });
     },
     addNotice: (text) => {
@@ -161,6 +190,12 @@ export const useStore = create((set, get) => ({
                         yolo: () => get().yolo,
                         setYolo: () => {
                             set({ yolo: true, pendingShell: null });
+                        },
+                        setMode: (mode) => {
+                            set({ mode });
+                        },
+                        onTodos: (items) => {
+                            set({ todos: items });
                         },
                         waitShell: (command) => new Promise((resolve) => {
                             shellWait = resolve;

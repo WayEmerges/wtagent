@@ -50,5 +50,10 @@
     "keepRecentMessages": 0,
     "summarizer": "summarizer",
     "injectChars": 12000
-  }
+  },
+  "webSearch": {
+    "provider": "none",
+    "apiKey": ""
+  },
+  "mcpServers": {}
 }

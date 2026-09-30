@@ -3,6 +3,7 @@ import { type TokenUsage } from "../llm/stream.js";
 import { type SavedSession } from "../sessions/store.js";
 import type { TranscriptRow } from "../ui/rows.js";
 import { type AgentMode } from "./session.js";
+import type { TodoItem } from "../tools/todo.js";
 export type ShellDecision = "allow" | "deny" | "yolo";
 export type SessionStore = {
     rows: TranscriptRow[];
@@ -23,7 +24,11 @@ export type SessionStore = {
     pendingShell: {
         command: string;
     } | null;
+    todos: TodoItem[];
     cycleMode: () => void;
+    setMode: (mode: AgentMode) => void;
+    toggleExpandLastTool: () => void;
+    setTodos: (items: TodoItem[]) => void;
     addNotice: (text: string) => void;
     addError: (text: string) => void;
     clearChat: () => void;

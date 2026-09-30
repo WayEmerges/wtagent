@@ -40,6 +40,18 @@ export type MemoryConfig = {
   injectChars: number;
 };
 
+export type WebSearchConfig = {
+  provider: "none" | "brave" | "tavily";
+  apiKey?: string;
+};
+
+export type McpServerConfig = {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+};
+
 export type LoadedConfig = {
   path: string;
   missing: boolean;
@@ -48,6 +60,8 @@ export type LoadedConfig = {
   auto?: AutoConfig;
   lease: LeaseConfig;
   memory: MemoryConfig;
+  webSearch: WebSearchConfig;
+  mcpServers: Record<string, McpServerConfig>;
   models: Record<string, ModelEntry>;
   lastModel?: string;
 };
@@ -231,6 +245,50 @@ export function writeLastModel(key: string): void {
   writeFileSync(statePath(), `${JSON.stringify(prev, null, 2)}\n`, "utf8");
 }
 
+function defaultWebSearch(): WebSearchConfig {
+  return { provider: "none" };
+}
+
+function parseWebSearch(raw: unknown): WebSearchConfig {
+  const o = asRecord(raw);
+  if (!o) {
+    return defaultWebSearch();
+  }
+  const provider =
+    o.provider === "brave" || o.provider === "tavily" || o.provider === "none"
+      ? o.provider
+      : "none";
+  const apiKey = typeof o.apiKey === "string" ? o.apiKey : undefined;
+  return { provider, apiKey };
+}
+
+function parseMcpServers(raw: unknown): Record<string, McpServerConfig> {
+  const o = asRecord(raw);
+  if (!o) {
+    return {};
+  }
+  const out: Record<string, McpServerConfig> = {};
+  for (const [name, value] of Object.entries(o)) {
+    const s = asRecord(value);
+    if (!s) {
+      continue;
+    }
+    const envRaw = asRecord(s.env);
+    const env = envRaw
+      ? Object.fromEntries(
+          Object.entries(envRaw).filter((e): e is [string, string] => typeof e[1] === "string"),
+        )
+      : undefined;
+    out[name] = {
+      command: typeof s.command === "string" ? s.command : undefined,
+      args: Array.isArray(s.args) ? s.args.filter((a): a is string => typeof a === "string") : undefined,
+      env,
+      url: typeof s.url === "string" ? s.url : undefined,
+    };
+  }
+  return out;
+}
+
 function emptyConfig(path: string, lastModel?: string, invalid?: string): LoadedConfig {
   return {
     path,
@@ -239,6 +297,8 @@ function emptyConfig(path: string, lastModel?: string, invalid?: string): Loaded
     defaultModel: "auto",
     lease: defaultLease(),
     memory: defaultMemory({}),
+    webSearch: defaultWebSearch(),
+    mcpServers: {},
     models: {},
     lastModel,
   };
@@ -317,6 +377,8 @@ export function loadConfig(): LoadedConfig {
     auto,
     lease,
     memory,
+    webSearch: parseWebSearch(root.webSearch),
+    mcpServers: parseMcpServers(root.mcpServers),
     models,
     lastModel,
   };

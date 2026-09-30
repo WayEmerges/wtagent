@@ -29,6 +29,7 @@ import { copyText } from "../ui/clipboard.js";
 import type { TranscriptRow } from "../ui/rows.js";
 import { SLASH_COMMANDS } from "../ui/slash-palette.js";
 import { AGENT_MODES, type AgentMode } from "./session.js";
+import type { TodoItem } from "../tools/todo.js";
 
 const HELP_TEXT = SLASH_COMMANDS.map(
   (c) => `${c.name}  ${c.summary}${c.implemented ? "" : "  (not implemented)"}`,
@@ -73,7 +74,11 @@ export type SessionStore = {
   usageApprox: boolean;
   yolo: boolean;
   pendingShell: { command: string } | null;
+  todos: TodoItem[];
   cycleMode: () => void;
+  setMode: (mode: AgentMode) => void;
+  toggleExpandLastTool: () => void;
+  setTodos: (items: TodoItem[]) => void;
   addNotice: (text: string) => void;
   addError: (text: string) => void;
   clearChat: () => void;
@@ -112,11 +117,43 @@ export const useStore = create<SessionStore>((set, get) => ({
   usageApprox: false,
   yolo: false,
   pendingShell: null,
+  todos: [],
 
   cycleMode: () => {
     set((s) => {
       const i = AGENT_MODES.indexOf(s.mode);
       return { mode: AGENT_MODES[(i + 1) % AGENT_MODES.length] ?? "Agent" };
+    });
+  },
+
+  setMode: (mode) => {
+    set({ mode });
+  },
+
+  setTodos: (items) => {
+    set({ todos: items });
+  },
+
+  toggleExpandLastTool: () => {
+    set((s) => {
+      let lastIdx = -1;
+      for (let i = s.rows.length - 1; i >= 0; i--) {
+        const row = s.rows[i]!;
+        if (row.kind === "tool" && row.output && row.output.includes("\n")) {
+          lastIdx = i;
+          break;
+        }
+      }
+      if (lastIdx < 0) {
+        return s;
+      }
+      const rows = s.rows.map((row, i) => {
+        if (i !== lastIdx || row.kind !== "tool") {
+          return row;
+        }
+        return { ...row, expanded: !row.expanded };
+      });
+      return { rows };
     });
   },
 
@@ -242,6 +279,12 @@ export const useStore = create<SessionStore>((set, get) => ({
             yolo: () => get().yolo,
             setYolo: () => {
               set({ yolo: true, pendingShell: null });
+            },
+            setMode: (mode) => {
+              set({ mode });
+            },
+            onTodos: (items) => {
+              set({ todos: items });
             },
             waitShell: (command) =>
               new Promise<ShellDecision>((resolve) => {

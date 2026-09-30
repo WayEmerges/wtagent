@@ -6,7 +6,7 @@ const READ_TIMEOUT_MS = 8_000;
 export function resolvePath(p) {
     return resolve(process.cwd(), p);
 }
-export async function readFileTool(path) {
+export async function readFileTool(path, opts) {
     const abs = resolvePath(path);
     const st = await stat(abs);
     if (st.isDirectory()) {
@@ -15,7 +15,7 @@ export async function readFileTool(path) {
     if (st.size === 0) {
         return "";
     }
-    return await new Promise((resolvePromise, reject) => {
+    const full = await new Promise((resolvePromise, reject) => {
         const chunks = [];
         const stream = createReadStream(abs, { start: 0, end: Math.max(0, MAX_READ - 1) });
         const timer = setTimeout(() => {
@@ -35,6 +35,19 @@ export async function readFileTool(path) {
             reject(err);
         });
     });
+    const offset = opts?.offset;
+    const limit = opts?.limit;
+    if (offset === undefined && limit === undefined) {
+        return full;
+    }
+    const lines = full.split("\n");
+    const start = Math.max(0, (offset ?? 1) - 1);
+    const end = limit !== undefined ? start + Math.max(0, limit) : lines.length;
+    const slice = lines.slice(start, end);
+    const pad = String(Math.max(1, end)).length;
+    const numbered = slice.map((line, i) => `${String(start + i + 1).padStart(pad, " ")}|${line}`);
+    const more = end < lines.length ? `\n…[${lines.length - end} more lines]` : "";
+    return `${numbered.join("\n")}${more}`;
 }
 export async function listDirTool(path) {
     const abs = resolvePath(path);

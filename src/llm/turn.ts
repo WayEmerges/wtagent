@@ -8,9 +8,10 @@ import {
 } from "../memory/compact.js";
 import { buildSkillsInject } from "../skills/load.js";
 import type { AgentMode } from "../state/session.js";
-import { executeTool } from "../tools/run.js";
+import { executeTool, type ToolContext } from "../tools/run.js";
+import type { TodoItem } from "../tools/todo.js";
 import type { TranscriptRow } from "../ui/rows.js";
-import { openaiTools } from "./tools-openai.js";
+import { openaiTools, PARALLEL_SAFE_TOOLS, refreshMcpTools } from "./tools-openai.js";
 import {
   parseXmlToolCalls,
   stripXmlToolCalls,
@@ -24,7 +25,7 @@ import {
   type ToolCall,
 } from "./stream.js";
 
-const MAX_ITERS = 20;
+const MAX_ITERS = 40;
 
 const xmlByServer = new Map<string, boolean>();
 
@@ -42,6 +43,14 @@ const ANSWER_FROM_FILES = [
   "Use the real names that appear in the file. Never invent methods, line numbers, or example classes.",
   "If a name is not in the attached files, say it is not in the file. Do not write placeholder code.",
   "Never reply with only 'file read' / 'X read.' That is not an answer.",
+].join(" ");
+
+const AGENT_BEHAVIOR = [
+  "You are an autonomous coding agent. Call tools yourself — never tell the user to run commands or type tool names.",
+  "Prefer parallel read/search tools (read_file, grep, glob, webfetch) in one turn when exploring.",
+  "For multi-step work, use todo_write. Prefer webfetch/web_search over inventing docs.",
+  "Use edit_file with a unique old_string (or replace_all). Use run_shell for commands; await_shell for background jobs.",
+  "Do not narrate fake tool calls as text — emit real tool calls only.",
 ].join(" ");
 
 function withLineNumbers(text: string): string {
@@ -139,18 +148,18 @@ function toolGuidance(
   const missing = named.filter((p) => !packHasPath(filePack, p));
   const core = xml
     ? xmlToolSystem(mode)
-    : "You have workspace tools. Call them yourself — never tell the user to type a tool name.";
+    : `${AGENT_BEHAVIOR}\nYou have workspace tools. Call them yourself — never tell the user to type a tool name.`;
   if (missing.length > 0) {
-    return `${core}\nCall read_file once each for: ${missing.join(", ")}. Then answer from the contents. ${ANSWER_FROM_FILES}`;
+    return `${core}\nCall read_file (in parallel if multiple) for: ${missing.join(", ")}. Then answer from the contents. ${ANSWER_FROM_FILES}`;
   }
   if (filePack.length > 0) {
-    return `${core}\nThe files are already attached. Do not call read_file again unless a newly named path is missing. ${ANSWER_FROM_FILES}`;
+    return `${core}\nThe files are already attached. Re-read only if you need another slice/offset or a newly named path. ${ANSWER_FROM_FILES}`;
   }
   const namedBit =
     named.length > 0
-      ? `The user named: ${named.join(", ")}. Call read_file once per path, then answer.`
-      : "If the question is about workspace code, call read_file (or glob/grep if the path is unknown), then answer.";
-  return `${core}\n${namedBit} Do not call list_dir first. After tool results, stop calling tools. ${ANSWER_FROM_FILES}`;
+      ? `The user named: ${named.join(", ")}. Call read_file once per path (parallel OK), then answer.`
+      : "If the question is about workspace code, call read_file/glob/grep as needed, then answer. Multi-step coding: use todos and keep calling tools until done.";
+  return `${core}\n${namedBit} Prefer tools over guessing. ${ANSWER_FROM_FILES}`;
 }
 
 function mentionedPaths(text: string): string[] {
@@ -178,9 +187,10 @@ function systemPrompt(
   const lines = [
     `You are a coding assistant. Working directory: ${process.cwd()}. Mode: ${mode}.`,
     "Use Markdown: headings, lists, fenced code.",
+    AGENT_BEHAVIOR,
   ];
   if (mode !== "Agent") {
-    lines.push("You may read files. Do not write files or run shell commands.");
+    lines.push("You may read files and search. Do not write files or run shell commands.");
   }
   lines.push(toolGuidance(mode, xml, userText, filePack));
   if (skillsDigest.trim().length > 0) {
@@ -232,28 +242,18 @@ function historyMessages(
   return out;
 }
 
-
 function toolKey(call: ToolCall): string {
-  try {
-    const o = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-    if (call.name === "read_file" || call.name === "list_dir") {
-      const path = String(o.path ?? "")
-        .replace(/\\/g, "/")
-        .replace(/^\.\//, "")
-        .trim();
-      return `${call.name}:${path}`;
-    }
-    return `${call.name}:${JSON.stringify(o)}`;
-  } catch {
-    return `${call.name}:${call.arguments}`;
-  }
+  return `${call.name}:${call.arguments}`;
 }
 
 function isPlaceholderCall(call: ToolCall): boolean {
   try {
     const o = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
     const path = String(o.path ?? "").trim();
-    return path.length === 0 || path === "PATH" || path === "src/example.ts" || path === "__PATH__";
+    if (call.name === "read_file" || call.name === "list_dir" || call.name === "delete_file") {
+      return path.length === 0 || path === "PATH" || path === "src/example.ts" || path === "__PATH__";
+    }
+    return false;
   } catch {
     return false;
   }
@@ -278,6 +278,8 @@ export type TurnHooks = {
   waitShell: (command: string) => Promise<"allow" | "deny" | "yolo">;
   yolo: () => boolean;
   setYolo: () => void;
+  setMode: (mode: AgentMode) => void;
+  onTodos: (items: TodoItem[]) => void;
 };
 
 export async function runAgentTurn(args: {
@@ -293,6 +295,8 @@ export async function runAgentTurn(args: {
   if (!entry) {
     return;
   }
+
+  await refreshMcpTools(args.config).catch(() => {});
 
   const lease = getGpuLease(args.config);
   let handle = await lease.acquire(args.modelKey, args.signal);
@@ -314,6 +318,125 @@ type LeaseControl = {
   release: () => Promise<void>;
   reacquire: () => Promise<void>;
 };
+
+function insertToolRow(
+  hooks: TurnHooks,
+  asstId: string,
+  row: Extract<TranscriptRow, { kind: "tool" }>,
+): void {
+  hooks.patchRows((rows) => {
+    const asst = rows.filter((r) => r.id === asstId);
+    const rest = rows.filter((r) => r.id !== asstId);
+    return [...rest, row, ...asst];
+  });
+}
+
+function patchToolRow(
+  hooks: TurnHooks,
+  toolId: string,
+  patch: Partial<Extract<TranscriptRow, { kind: "tool" }>>,
+): void {
+  hooks.patchRows((rows) =>
+    rows.map((row) => (row.id === toolId && row.kind === "tool" ? { ...row, ...patch } : row)),
+  );
+}
+
+async function runOneTool(opts: {
+  call: ToolCall;
+  args: {
+    config: LoadedConfig;
+    modelKey: string;
+    mode: AgentMode;
+    asstId: string;
+    signal: AbortSignal;
+    hooks: TurnHooks;
+  };
+  xmlResults: boolean;
+  messages: ChatMessage[];
+}): Promise<string> {
+  const { call, args, xmlResults, messages } = opts;
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+  } catch {
+    parsed = {};
+  }
+
+  if (call.name === "run_shell" && !args.hooks.yolo()) {
+    const cmd = String(parsed.command ?? "");
+    const decision = await args.hooks.waitShell(cmd);
+    if (args.signal.aborted) {
+      return "aborted";
+    }
+    if (decision === "yolo") {
+      args.hooks.setYolo();
+    }
+    if (decision === "deny") {
+      const toolId = nextId();
+      insertToolRow(args.hooks, args.asstId, {
+        id: toolId,
+        kind: "tool",
+        name: call.name,
+        args: shortArgs(call.arguments),
+        status: "error",
+        detail: "denied",
+        summary: `$ ${cmd.slice(0, 80)} (denied)`,
+      });
+      return "User denied this shell command.";
+    }
+  }
+
+  const toolId = nextId();
+  let toolPath: string | undefined;
+  if (typeof parsed.path === "string" && parsed.path.length > 0) {
+    toolPath = parsed.path;
+  } else if (typeof parsed.target_notebook === "string") {
+    toolPath = parsed.target_notebook;
+  }
+
+  insertToolRow(args.hooks, args.asstId, {
+    id: toolId,
+    kind: "tool",
+    name: call.name,
+    args: shortArgs(call.arguments),
+    status: "running",
+    path: toolPath,
+    summary:
+      call.name === "read_file" && toolPath
+        ? `Read ${toolPath}`
+        : call.name === "run_shell"
+          ? `$ ${String(parsed.command ?? "").slice(0, 80)}`
+          : undefined,
+  });
+
+  const toolCtx: ToolContext = {
+    config: args.config,
+    modelKey: args.modelKey,
+    signal: args.signal,
+    setMode: args.hooks.setMode,
+    onTodos: args.hooks.onTodos,
+    onTaskNotice: (text) => {
+      args.hooks.patchRows((rows) => [...rows, { id: nextId(), kind: "notice", text }]);
+    },
+  };
+
+  const exec = await executeTool(call.name, call.arguments, args.mode, toolCtx);
+  patchToolRow(args.hooks, toolId, {
+    status: exec.ok ? "done" : "error",
+    detail: exec.detail ?? exec.text.slice(0, 120),
+    path: exec.path ?? toolPath,
+    output:
+      exec.output ??
+      (call.name === "read_file" && exec.ok ? exec.text.slice(0, FILE_PACK_EACH) : undefined),
+    summary: exec.summary,
+    added: exec.added,
+    removed: exec.removed,
+    collapsedHint: exec.collapsedHint,
+    shellId: exec.shellId,
+  });
+
+  return exec.text.slice(0, 24_000);
+}
 
 async function runAgentTurnLocked(
   args: {
@@ -424,7 +547,6 @@ async function runAgentTurnLocked(
     const liveRows = args.hooks.getRows();
     const filePack = filePackFromRows(liveRows);
     const userText = lastUserText(liveRows);
-    const missing = mentionedPaths(userText).filter((p) => !packHasPath(filePack, p));
     if (messages[0]) {
       messages[0] = {
         role: "system",
@@ -452,10 +574,7 @@ async function runAgentTurnLocked(
       }
     }
 
-    const toolsOff =
-      nudgedToAnswer ||
-      groundingRetry ||
-      (missing.length === 0 && (filesLoaded || filePack.length > 0));
+    const toolsOff = nudgedToAnswer || groundingRetry;
     let result: { text: string; toolCalls: ToolCall[] };
     try {
       result = await streamChat({
@@ -558,96 +677,36 @@ async function runAgentTurnLocked(
       tool_calls: xmlResults ? undefined : fresh,
     });
 
-    const resultChunks: string[] = [];
     for (const call of fresh) {
+      seenTools.add(toolKey(call));
+    }
+
+    const parallel = fresh.filter(
+      (c) => PARALLEL_SAFE_TOOLS.has(c.name) || c.name.startsWith("mcp__"),
+    );
+    const serial = fresh.filter(
+      (c) => !PARALLEL_SAFE_TOOLS.has(c.name) && !c.name.startsWith("mcp__"),
+    );
+
+    const resultChunks: string[] = [];
+
+    if (parallel.length > 0) {
+      const parts = await Promise.all(
+        parallel.map(async (call) => ({ call, body: await runOneTool({ call, args, xmlResults, messages }) })),
+      );
+      for (const { call, body } of parts) {
+        resultChunks.push(body);
+        if (!xmlResults) {
+          messages.push({ role: "tool", tool_call_id: call.id, content: body });
+        }
+      }
+    }
+
+    for (const call of serial) {
       if (args.signal.aborted) {
         return;
       }
-      seenTools.add(toolKey(call));
-      let parsed: Record<string, unknown> = {};
-      try {
-        parsed = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-      } catch {
-        parsed = {};
-      }
-      if (call.name === "run_shell" && !args.hooks.yolo()) {
-        const cmd = String(parsed.command ?? "");
-        const decision = await args.hooks.waitShell(cmd);
-        if (args.signal.aborted) {
-          return;
-        }
-        if (decision === "yolo") {
-          args.hooks.setYolo();
-        }
-        if (decision === "deny") {
-          const toolId = nextId();
-          args.hooks.patchRows((rows) => [
-            ...rows.filter((r) => r.id !== args.asstId),
-            {
-              id: toolId,
-              kind: "tool",
-              name: call.name,
-              args: shortArgs(call.arguments),
-              status: "error",
-              detail: "denied",
-            },
-            ...rows.filter((r) => r.id === args.asstId),
-          ]);
-          const denied = "User denied this shell command.";
-          resultChunks.push(denied);
-          if (!xmlResults) {
-            messages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: denied,
-            });
-          }
-          continue;
-        }
-      }
-
-      const toolId = nextId();
-      args.hooks.patchRows((rows) => {
-        const asst = rows.filter((r) => r.id === args.asstId);
-        const rest = rows.filter((r) => r.id !== args.asstId);
-        return [
-          ...rest,
-          {
-            id: toolId,
-            kind: "tool",
-            name: call.name,
-            args: shortArgs(call.arguments),
-            status: "running",
-          },
-          ...asst,
-        ];
-      });
-
-      let toolPath: string | undefined;
-      try {
-        const o = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-        if (typeof o.path === "string" && o.path.length > 0) {
-          toolPath = o.path;
-        }
-      } catch {
-        toolPath = undefined;
-      }
-      const exec = await executeTool(call.name, call.arguments, args.mode);
-      args.hooks.patchRows((rows) =>
-        rows.map((row) =>
-          row.id === toolId && row.kind === "tool"
-            ? {
-                ...row,
-                status: exec.ok ? "done" : "error",
-                detail: exec.detail ?? exec.text.slice(0, 80),
-                path: toolPath,
-                output:
-                  call.name === "read_file" && exec.ok ? exec.text.slice(0, FILE_PACK_EACH) : row.output,
-              }
-            : row,
-        ),
-      );
-      const body = exec.text.slice(0, 24_000);
+      const body = await runOneTool({ call, args, xmlResults, messages });
       resultChunks.push(body);
       if (!xmlResults) {
         messages.push({ role: "tool", tool_call_id: call.id, content: body });
@@ -669,6 +728,7 @@ async function runAgentTurnLocked(
     }
 
     filesLoaded = filesLoaded || fresh.some((c) => c.name === "read_file");
+    nudgedToAnswer = false;
     outText = "";
     args.hooks.patchRows((rows) =>
       rows.map((row) =>

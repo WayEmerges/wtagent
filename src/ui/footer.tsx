@@ -53,6 +53,7 @@ export const Footer = memo(function Footer() {
   const config = useStore((s) => s.config);
   const usage = useStore((s) => s.usage);
   const usageApprox = useStore((s) => s.usageApprox);
+  const todos = useStore((s) => s.todos);
   const cwd = process.cwd();
   const pathLabel = displayPath(cwd);
   const branch = useMemo(() => gitBranch(cwd), [cwd]);
@@ -73,6 +74,14 @@ export const Footer = memo(function Footer() {
         ? `${tilde}${formatCount(used)}/${formatCount(ctx)} ${pct}%`
         : `${tilde}${formatCount(used)} tok`;
   }
+  const openTodos = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
+  const todoBit =
+    openTodos.length > 0
+      ? `todos ${openTodos.length}: ${openTodos
+          .slice(0, 2)
+          .map((t) => t.content.slice(0, 24))
+          .join(" · ")}`
+      : "";
 
   const modelShown =
     modelKey === "auto"
@@ -99,6 +108,11 @@ export const Footer = memo(function Footer() {
           {branch ? ` · ${branch}` : ""}
         </Text>
       </Box>
+      {todoBit ? (
+        <Box>
+          <Text dimColor>{todoBit}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 });

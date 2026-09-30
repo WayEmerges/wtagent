@@ -321,6 +321,10 @@ export function Composer() {
     if (isFocusNoise(input)) {
       return;
     }
+    if (key.ctrl && (input === "o" || input === "O")) {
+      useStore.getState().toggleExpandLastTool();
+      return;
+    }
     if (pendingShell) {
       if (input === "y" || input === "Y") {
         useStore.getState().resolveShell("allow");
