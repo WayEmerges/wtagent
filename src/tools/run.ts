@@ -1,4 +1,5 @@
 import type { LoadedConfig } from "../config/load.js";
+import { INVALID_TOOL_ARGS_MSG, parseToolArguments } from "../llm/tool-args.js";
 import { allowTool } from "../llm/tools-xml.js";
 import type { AgentMode } from "../state/session.js";
 import { grepTool, globTool } from "./grep.js";
@@ -55,9 +56,12 @@ export async function executeTool(
     if (!ctx?.config) {
       return errResult("mcp tools require config context");
     }
+    const parsed = parseToolArguments(rawArgs);
+    if (!parsed.ok) {
+      return errResult(INVALID_TOOL_ARGS_MSG);
+    }
     try {
-      const args = JSON.parse(rawArgs || "{}") as Record<string, unknown>;
-      const text = await callMcpTool(ctx.config.mcpServers, mcp.server, mcp.tool, args);
+      const text = await callMcpTool(ctx.config.mcpServers, mcp.server, mcp.tool, parsed.args);
       return okResult(text, { summary: `mcp ${mcp.server}/${mcp.tool}` });
     } catch (err) {
       return errResult(err instanceof Error ? err.message : String(err));
@@ -67,12 +71,11 @@ export async function executeTool(
   if (!allowTool(name, mode)) {
     return errResult(`${name} is not available in ${mode} mode`);
   }
-  let args: Record<string, unknown> = {};
-  try {
-    args = JSON.parse(rawArgs || "{}") as Record<string, unknown>;
-  } catch {
-    return errResult("invalid tool arguments");
+  const parsedArgs = parseToolArguments(rawArgs);
+  if (!parsedArgs.ok) {
+    return errResult(INVALID_TOOL_ARGS_MSG);
   }
+  const args = parsedArgs.args;
 
   try {
     switch (name) {

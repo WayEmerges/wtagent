@@ -1,5 +1,6 @@
 import { getGpuLease } from "../gpu/lease.js";
 import { getClient } from "../llm/client.js";
+import { thinkingTemplateKwargs } from "../llm/stream.js";
 import { preferChatModel } from "../orchestrator/route.js";
 import { appendMemorySection, readMemoryInject } from "./store.js";
 export function summarizerModelKey(config) {
@@ -13,6 +14,10 @@ export function summarizerModelKey(config) {
     return preferChatModel(config);
 }
 export function shouldCompact(args) {
+    const absolute = args.compactAtTokens;
+    if (absolute !== undefined && absolute > 0) {
+        return args.promptTokens >= absolute;
+    }
     const ctx = args.contextLength;
     if (!ctx || ctx <= 0) {
         return false;
@@ -89,6 +94,8 @@ async function runSummarizer(args) {
             },
             { role: "user", content: args.transcript },
         ],
+        // Summaries need content, not hidden reasoning.
+        ...thinkingTemplateKwargs(false),
     }, { signal: args.signal });
     const text = completion.choices[0]?.message?.content?.trim() ?? "";
     return text.length > 0 ? text : "- (empty summary)";

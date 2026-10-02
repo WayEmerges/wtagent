@@ -65,14 +65,14 @@ Inference is serialized with a process-local lease (optional lockfile at `lease.
 
 ### Memory compaction
 
-When estimated prompt tokens reach `contextLength × memory.threshold` (default 0.75), wtagent:
+When estimated prompt tokens reach `memory.compactAtTokens` (default **90000**), wtagent compacts. Set `compactAtTokens` to `0` in config to use the legacy rule `contextLength × memory.threshold` instead. Match each model’s `contextLength` to your server (e.g. **190000**).
 
 1. Summarizes the session (summarizer model, or fallback)
 2. Appends to `~/.waytech-agent/memory/{workspaceHash}/MEMORY.md`
 3. Clears the live transcript (default `keepRecentMessages: 0`)
 4. Injects a bounded tail of `MEMORY.md` into later system prompts
 
-Force with `/compact`. Set a low `contextLength` or `memory.threshold` to test.
+Force with `/compact`. Set a low `memory.compactAtTokens` to test.
 
 ### Skills (prompt packs)
 
@@ -126,6 +126,7 @@ See `config.json.example`. Shape:
   "memory": {
     "enabled": true,
     "dir": "~/.waytech-agent/memory",
+    "compactAtTokens": 90000,
     "threshold": 0.75,
     "keepRecentMessages": 0,
     "summarizer": "summarizer",
@@ -136,31 +137,38 @@ See `config.json.example`. Shape:
       "name": "Brain",
       "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "model": "Qwen/Qwen3.8-27B",
       "roles": ["chat", "plan"],
-      "contextLength": 32768
+      "contextLength": 190000,
+      "enableThinking": false
     },
     "coder": {
       "name": "Coder",
       "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "model": "Qwen/Qwen3.8-27B",
       "roles": ["agent", "code"],
-      "contextLength": 32768
+      "contextLength": 190000,
+      "enableThinking": false
     },
     "summarizer": {
       "name": "Summarizer",
       "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+      "model": "Qwen/Qwen3.8-27B",
       "roles": ["summarize"],
-      "contextLength": 32768
+      "contextLength": 190000,
+      "enableThinking": false
     }
   }
 }
 ```
 
-`brain`, `coder`, and `summarizer` may share the same upstream model id. Replace `YOUR_HOST` (and model id if needed) with **your** server values. Design notes: `docs/PHASE-I-IMPLEMENTATION.md`.
+`brain`, `coder`, and `summarizer` may share the same upstream model id. Replace `YOUR_HOST` (and model id if needed) with **your** server values.
+
+For Qwen3 / vLLM reasoning models, keep `"enableThinking": false` (the default). When thinking is on, the model often streams only into a hidden `reasoning` field and leaves the visible reply blank. Set it to `true` only if you want that mode.
+
+Design notes: `docs/PHASE-I-IMPLEMENTATION.md`.
 
 ## License
 

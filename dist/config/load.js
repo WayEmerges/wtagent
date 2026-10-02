@@ -41,7 +41,9 @@ function parseModel(raw, key) {
     const roles = Array.isArray(o.roles)
         ? o.roles.filter((r) => typeof r === "string")
         : undefined;
-    return { name, baseURL, apiKey, model, contextLength, roles };
+    // Default off: thinking models (e.g. Qwen3) often finish with empty content.
+    const enableThinking = typeof o.enableThinking === "boolean" ? o.enableThinking : false;
+    return { name, baseURL, apiKey, model, contextLength, roles, enableThinking };
 }
 function clampUnit(n, fallback) {
     if (!Number.isFinite(n) || n <= 0 || n > 1) {
@@ -65,6 +67,7 @@ function defaultMemory(models, auto) {
     return {
         enabled: summarizerKey !== undefined,
         dir: join(configDir(), "memory"),
+        compactAtTokens: 90_000,
         threshold: 0.75,
         keepRecentMessages: 0,
         summarizer: summarizerKey,
@@ -112,6 +115,11 @@ function parseMemory(raw, models, auto) {
     return {
         enabled,
         dir: typeof o.dir === "string" && o.dir.length > 0 ? expandHome(o.dir) : base.dir,
+        compactAtTokens: typeof o.compactAtTokens === "number" && Number.isFinite(o.compactAtTokens)
+            ? o.compactAtTokens <= 0
+                ? 0
+                : Math.floor(o.compactAtTokens)
+            : base.compactAtTokens,
         threshold: typeof o.threshold === "number" ? clampUnit(o.threshold, base.threshold) : base.threshold,
         keepRecentMessages: typeof o.keepRecentMessages === "number" &&
             Number.isFinite(o.keepRecentMessages) &&

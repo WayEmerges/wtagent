@@ -1,6 +1,7 @@
 import type { LoadedConfig, ModelEntry } from "../config/load.js";
 import { getGpuLease } from "../gpu/lease.js";
 import { getClient } from "../llm/client.js";
+import { thinkingTemplateKwargs } from "../llm/stream.js";
 import { preferChatModel } from "../orchestrator/route.js";
 import type { TranscriptRow } from "../ui/rows.js";
 import { appendMemorySection, readMemoryInject } from "./store.js";
@@ -19,8 +20,14 @@ export function summarizerModelKey(config: LoadedConfig): string | undefined {
 export function shouldCompact(args: {
   promptTokens: number;
   contextLength?: number;
+  /** When set (>0), compact at this estimated prompt token count. */
+  compactAtTokens?: number;
   threshold: number;
 }): boolean {
+  const absolute = args.compactAtTokens;
+  if (absolute !== undefined && absolute > 0) {
+    return args.promptTokens >= absolute;
+  }
   const ctx = args.contextLength;
   if (!ctx || ctx <= 0) {
     return false;
@@ -112,7 +119,9 @@ async function runSummarizer(args: {
         },
         { role: "user", content: args.transcript },
       ],
-    },
+      // Summaries need content, not hidden reasoning.
+      ...thinkingTemplateKwargs(false),
+    } as never,
     { signal: args.signal },
   );
   const text = completion.choices[0]?.message?.content?.trim() ?? "";

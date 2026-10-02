@@ -11,6 +11,12 @@ import type { AgentMode } from "../state/session.js";
 import { executeTool, type ToolContext } from "../tools/run.js";
 import type { TodoItem } from "../tools/todo.js";
 import type { TranscriptRow } from "../ui/rows.js";
+import {
+  apiSafeToolCall,
+  INVALID_TOOL_ARGS_MSG,
+  parseToolArguments,
+  peekToolPath,
+} from "./tool-args.js";
 import { openaiTools, PARALLEL_SAFE_TOOLS, refreshMcpTools } from "./tools-openai.js";
 import {
   parseXmlToolCalls,
@@ -247,28 +253,26 @@ function toolKey(call: ToolCall): string {
 }
 
 function isPlaceholderCall(call: ToolCall): boolean {
-  try {
-    const o = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-    const path = String(o.path ?? "").trim();
-    if (call.name === "read_file" || call.name === "list_dir" || call.name === "delete_file") {
-      return path.length === 0 || path === "PATH" || path === "src/example.ts" || path === "__PATH__";
-    }
-    return false;
-  } catch {
+  const parsed = parseToolArguments(call.arguments);
+  if (!parsed.ok) {
     return false;
   }
+  const path = String(parsed.args.path ?? "").trim();
+  if (call.name === "read_file" || call.name === "list_dir" || call.name === "delete_file") {
+    return path.length === 0 || path === "PATH" || path === "src/example.ts" || path === "__PATH__";
+  }
+  return false;
 }
 
 function shortArgs(raw: string): string {
-  try {
-    const o = JSON.parse(raw) as Record<string, unknown>;
-    const bits = Object.entries(o)
-      .slice(0, 3)
-      .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`);
-    return bits.join(" ");
-  } catch {
+  const parsed = parseToolArguments(raw);
+  if (!parsed.ok) {
     return raw.slice(0, 60);
   }
+  const bits = Object.entries(parsed.args)
+    .slice(0, 3)
+    .map(([k, v]) => `${k}=${String(v).slice(0, 40)}`);
+  return bits.join(" ");
 }
 
 export type TurnHooks = {
@@ -355,11 +359,26 @@ async function runOneTool(opts: {
   messages: ChatMessage[];
 }): Promise<string> {
   const { call, args, xmlResults, messages } = opts;
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-  } catch {
-    parsed = {};
+  const parsedArgs = parseToolArguments(call.arguments);
+  const parsed: Record<string, unknown> = parsedArgs.ok ? parsedArgs.args : {};
+  const toolPath = peekToolPath(call.arguments);
+
+  if (!parsedArgs.ok) {
+    const toolId = nextId();
+    const writeLike = call.name === "write_file" || call.name === "edit_file";
+    insertToolRow(args.hooks, args.asstId, {
+      id: toolId,
+      kind: "tool",
+      name: call.name,
+      args: shortArgs(call.arguments),
+      status: "error",
+      path: toolPath,
+      detail: "invalid tool arguments",
+      summary: writeLike
+        ? `${call.name === "write_file" ? "Wrote" : "Edited"} ${toolPath ?? "(invalid args)"}`
+        : `${call.name} (invalid args)`,
+    });
+    return INVALID_TOOL_ARGS_MSG;
   }
 
   if (call.name === "run_shell" && !args.hooks.yolo()) {
@@ -387,12 +406,6 @@ async function runOneTool(opts: {
   }
 
   const toolId = nextId();
-  let toolPath: string | undefined;
-  if (typeof parsed.path === "string" && parsed.path.length > 0) {
-    toolPath = parsed.path;
-  } else if (typeof parsed.target_notebook === "string") {
-    toolPath = parsed.target_notebook;
-  }
 
   insertToolRow(args.hooks, args.asstId, {
     id: toolId,
@@ -508,6 +521,7 @@ async function runAgentTurnLocked(
     shouldCompact({
       promptTokens: promptEst,
       contextLength: entry.contextLength,
+      compactAtTokens: args.config.memory.compactAtTokens,
       threshold: args.config.memory.threshold,
     })
   ) {
@@ -519,6 +533,15 @@ async function runAgentTurnLocked(
       args.hooks.setUsage({ prompt: promptEst, completion: 0, total: promptEst }, true);
     }
   }
+
+  const clearAssistantText = () => {
+    outText = "";
+    args.hooks.patchRows((rows) =>
+      rows.map((row) =>
+        row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row,
+      ),
+    );
+  };
 
   let outText = "";
   const onDelta = (chunk: string) => {
@@ -538,6 +561,8 @@ async function runAgentTurnLocked(
   let filesLoaded = false;
   let nudgedToAnswer = false;
   let groundingRetry = false;
+  let blankRetry = false;
+  let thinking = entry.enableThinking === true;
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
     if (args.signal.aborted) {
@@ -562,6 +587,7 @@ async function runAgentTurnLocked(
       shouldCompact({
         promptTokens: promptEst,
         contextLength: entry.contextLength,
+        compactAtTokens: args.config.memory.compactAtTokens,
         threshold: args.config.memory.threshold,
       })
     ) {
@@ -570,11 +596,11 @@ async function runAgentTurnLocked(
         messages = rebuildMessages(useXml);
         promptEst = estimatePrompt(messages);
         args.hooks.setUsage({ prompt: promptEst, completion: 0, total: promptEst }, true);
-        outText = "";
+        clearAssistantText();
       }
     }
 
-    const toolsOff = nudgedToAnswer || groundingRetry;
+    const toolsOff = nudgedToAnswer || groundingRetry || blankRetry;
     let result: { text: string; toolCalls: ToolCall[] };
     try {
       result = await streamChat({
@@ -584,6 +610,7 @@ async function runAgentTurnLocked(
         messages,
         tools: useXml || toolsOff ? undefined : openaiTools(args.mode),
         toolChoice: !useXml && toolsOff ? "none" : undefined,
+        enableThinking: thinking,
         signal: args.signal,
         onDelta,
         onUsage: (usage) => {
@@ -600,12 +627,7 @@ async function runAgentTurnLocked(
         if (did) {
           messages = rebuildMessages(xmlByServer.get(entry.baseURL) === true);
           promptEst = estimatePrompt(messages);
-          outText = "";
-          args.hooks.patchRows((rows) =>
-            rows.map((row) =>
-              row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row,
-            ),
-          );
+          clearAssistantText();
           continue;
         }
       }
@@ -659,22 +681,31 @@ async function runAgentTurnLocked(
             "Do not invent example or placeholder code.",
           ].join(" "),
         });
-        outText = "";
-        args.hooks.patchRows((rows) =>
-          rows.map((row) =>
-            row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row,
-          ),
-        );
+        clearAssistantText();
+        continue;
+      }
+      // Qwen3/vLLM thinking models often finish with only whitespace in content.
+      if (result.text.trim().length === 0 && !blankRetry) {
+        blankRetry = true;
+        thinking = false;
+        clearAssistantText();
+        messages.push({
+          role: "user",
+          content:
+            "Your previous reply was empty (no visible text). Answer the user's latest question now with a real reply. Do not call tools unless required.",
+        });
         continue;
       }
       return;
     }
 
     const xmlResults = nativeCalls.length === 0;
+    // Never round-trip malformed function.arguments — local APIs (vLLM/Qwen)
+    // often 400 when parsing truncated tool-call JSON in message history.
     messages.push({
       role: "assistant",
       content: xmlResults ? stripXmlToolCalls(result.text) : result.text,
-      tool_calls: xmlResults ? undefined : fresh,
+      tool_calls: xmlResults ? undefined : fresh.map(apiSafeToolCall),
     });
 
     for (const call of fresh) {
@@ -729,12 +760,8 @@ async function runAgentTurnLocked(
 
     filesLoaded = filesLoaded || fresh.some((c) => c.name === "read_file");
     nudgedToAnswer = false;
-    outText = "";
-    args.hooks.patchRows((rows) =>
-      rows.map((row) =>
-        row.id === args.asstId && row.kind === "assistant" ? { ...row, text: "" } : row,
-      ),
-    );
+    blankRetry = false;
+    clearAssistantText();
   }
 
   args.hooks.patchRows((rows) => [

@@ -65,11 +65,19 @@ export async function taskTool(opts: {
       model: entry.model,
       messages,
       tools: openaiTools(mode),
+      enableThinking: entry.enableThinking === true,
       signal: opts.signal,
       onDelta: () => {},
     });
     lastText = result.text;
     if (result.toolCalls.length === 0) {
+      if (result.text.trim().length === 0) {
+        messages.push({
+          role: "user",
+          content: "Your previous reply was empty. Provide the final answer as visible text now.",
+        });
+        continue;
+      }
       messages.push({ role: "assistant", content: result.text });
       break;
     }

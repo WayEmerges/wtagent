@@ -9,6 +9,11 @@ export type ModelEntry = {
   model: string;
   contextLength?: number;
   roles?: string[];
+  /**
+   * Qwen3 / vLLM "thinking" mode. When true, the model may stream into
+   * `reasoning` and leave `content` blank. Default false for reliable replies.
+   */
+  enableThinking?: boolean;
 };
 
 export type AutoConfig = {
@@ -34,6 +39,8 @@ export type LeaseConfig = {
 export type MemoryConfig = {
   enabled: boolean;
   dir: string;
+  /** Estimated prompt tokens at which to auto-compact (preferred over threshold ratio). */
+  compactAtTokens: number;
   threshold: number;
   keepRecentMessages: number;
   summarizer?: string;
@@ -118,7 +125,9 @@ function parseModel(raw: unknown, key: string): ModelEntry | undefined {
   const roles = Array.isArray(o.roles)
     ? o.roles.filter((r): r is string => typeof r === "string")
     : undefined;
-  return { name, baseURL, apiKey, model, contextLength, roles };
+  // Default off: thinking models (e.g. Qwen3) often finish with empty content.
+  const enableThinking = typeof o.enableThinking === "boolean" ? o.enableThinking : false;
+  return { name, baseURL, apiKey, model, contextLength, roles, enableThinking };
 }
 
 function clampUnit(n: number, fallback: number): number {
@@ -146,6 +155,7 @@ function defaultMemory(models: Record<string, ModelEntry>, auto?: AutoConfig): M
   return {
     enabled: summarizerKey !== undefined,
     dir: join(configDir(), "memory"),
+    compactAtTokens: 90_000,
     threshold: 0.75,
     keepRecentMessages: 0,
     summarizer: summarizerKey,
@@ -206,6 +216,12 @@ function parseMemory(
   return {
     enabled,
     dir: typeof o.dir === "string" && o.dir.length > 0 ? expandHome(o.dir) : base.dir,
+    compactAtTokens:
+      typeof o.compactAtTokens === "number" && Number.isFinite(o.compactAtTokens)
+        ? o.compactAtTokens <= 0
+          ? 0
+          : Math.floor(o.compactAtTokens)
+        : base.compactAtTokens,
     threshold:
       typeof o.threshold === "number" ? clampUnit(o.threshold, base.threshold) : base.threshold,
     keepRecentMessages:

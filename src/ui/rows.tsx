@@ -141,7 +141,7 @@ export function RowView({ row }: { row: TranscriptRow }) {
   }
 
   if (row.kind === "assistant") {
-    if (row.text.length === 0) {
+    if (row.text.trim().length === 0) {
       return <Text dimColor> </Text>;
     }
     return <MarkdownView text={row.text} />;

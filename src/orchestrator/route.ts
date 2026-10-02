@@ -1,6 +1,7 @@
 import type { LoadedConfig } from "../config/load.js";
 import { getGpuLease } from "../gpu/lease.js";
 import { getClient } from "../llm/client.js";
+import { thinkingTemplateKwargs } from "../llm/stream.js";
 import type { AgentMode } from "../state/session.js";
 
 export type RouteResult = {
@@ -116,7 +117,8 @@ async function askOrchestrator(
           },
           { role: "user", content: userText.slice(0, 2000) },
         ],
-      },
+        ...thinkingTemplateKwargs(false),
+      } as never,
       { signal },
     );
     const text = completion.choices[0]?.message?.content ?? "";

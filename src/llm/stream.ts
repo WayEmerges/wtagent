@@ -67,6 +67,11 @@ export function estimateTokens(text: string): number {
 
 type AccumTool = { id: string; name: string; arguments: string };
 
+/** vLLM / Qwen3 chat-template switch for reasoning models. */
+export function thinkingTemplateKwargs(enableThinking: boolean): Record<string, unknown> {
+  return { chat_template_kwargs: { enable_thinking: enableThinking } };
+}
+
 export async function streamChat(args: {
   baseURL: string;
   apiKey: string;
@@ -74,6 +79,8 @@ export async function streamChat(args: {
   messages: ChatMessage[];
   tools?: ChatCompletionTool[];
   toolChoice?: "auto" | "none";
+  /** When set, passed as chat_template_kwargs.enable_thinking (Qwen3/vLLM). */
+  enableThinking?: boolean;
   onDelta: (text: string) => void;
   onUsage?: (usage: TokenUsage) => void;
   signal?: AbortSignal;
@@ -120,11 +127,16 @@ export async function streamChat(args: {
         body.tool_choice = args.toolChoice;
       }
     }
+    if (args.enableThinking !== undefined) {
+      Object.assign(body, thinkingTemplateKwargs(args.enableThinking));
+    }
 
     type ChunkStream = AsyncIterable<{
       choices: Array<{
         delta?: {
           content?: string | null;
+          reasoning?: string | null;
+          reasoning_content?: string | null;
           tool_calls?: Array<{
             index?: number;
             id?: string;
@@ -147,8 +159,10 @@ export async function streamChat(args: {
       )) as unknown as ChunkStream;
     } catch (err) {
       if (err instanceof APIError && err.status === 400) {
+        // Retry without thinking kwargs / stream_options if the server rejects them.
+        const { chat_template_kwargs: _drop, ...plain } = body;
         try {
-          stream = (await client.chat.completions.create(body as never, {
+          stream = (await client.chat.completions.create(plain as never, {
             signal: ac.signal,
           })) as unknown as ChunkStream;
         } catch (err2) {
@@ -187,6 +201,8 @@ export async function streamChat(args: {
         text += piece;
         args.onDelta(piece);
       }
+      // Intentionally ignore delta.reasoning / reasoning_content — that is
+      // internal chain-of-thought, not the user-visible answer.
       const tcs = delta?.tool_calls;
       if (tcs) {
         for (const tc of tcs) {

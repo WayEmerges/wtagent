@@ -49,6 +49,7 @@ async function runPrint(prompt: string): Promise<void> {
       baseURL: entry.baseURL,
       apiKey: entry.apiKey,
       model: entry.model,
+      enableThinking: entry.enableThinking === true,
       messages: [
         { role: "system", content: system },
         { role: "user", content: prompt },

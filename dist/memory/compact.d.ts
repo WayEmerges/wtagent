@@ -4,6 +4,8 @@ export declare function summarizerModelKey(config: LoadedConfig): string | undef
 export declare function shouldCompact(args: {
     promptTokens: number;
     contextLength?: number;
+    /** When set (>0), compact at this estimated prompt token count. */
+    compactAtTokens?: number;
     threshold: number;
 }): boolean;
 export declare function isContextOomError(err: unknown): boolean;

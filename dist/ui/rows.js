@@ -61,7 +61,7 @@ export function RowView({ row }) {
         return _jsx(UserPromptBox, { text: row.text });
     }
     if (row.kind === "assistant") {
-        if (row.text.length === 0) {
+        if (row.text.trim().length === 0) {
             return _jsx(Text, { dimColor: true, children: " " });
         }
         return _jsx(MarkdownView, { text: row.text });

@@ -1,5 +1,6 @@
 import { getGpuLease } from "../gpu/lease.js";
 import { getClient } from "../llm/client.js";
+import { thinkingTemplateKwargs } from "../llm/stream.js";
 const CODER_RE = /\b(implement|fix|refactor|write tests?|add tests?|create|patch|debug|build|compile|migrate|edit|change the code|update the code)\b/i;
 const BRAIN_RE = /\b(explain|why\b|what is|what's|how does|how do|review|summarize|compare|difference|meaning|overview)\b/i;
 const FILE_ASK_RE = /\b(read|look at|open|inspect|show me|check)\b|\b[\w.-]+\.[A-Za-z][\w.-]*\b|\b(?:[\w.-]+\/)+[\w.-]+\b/i;
@@ -92,6 +93,7 @@ async function askOrchestrator(config, userText, mode, signal) {
                 },
                 { role: "user", content: userText.slice(0, 2000) },
             ],
+            ...thinkingTemplateKwargs(false),
         }, { signal });
         const text = completion.choices[0]?.message?.content ?? "";
         return parseOrchestratorLabel(text, config);

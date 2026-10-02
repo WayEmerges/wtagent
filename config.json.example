@@ -3,34 +3,38 @@
   "models": {
     "main": {
       "name": "Local Main",
-      "baseURL": "http://100.110.242.67:8001/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen3.6-27B",
+      "model": "Qwen/Qwen3.8-27B",
       "contextLength": 190000,
+      "enableThinking": false,
       "roles": ["chat", "agent"]
     },
     "brain": {
       "name": "Brain",
-      "baseURL": "http://100.110.242.67:8001/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen3.6-27B",
+      "model": "Qwen/Qwen3.8-27B",
       "contextLength": 190000,
+      "enableThinking": false,
       "roles": ["chat", "plan"]
     },
     "coder": {
       "name": "Coder",
-      "baseURL": "http:/100.110.242.67:8001/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen3.6-27B",
+      "model": "Qwen/Qwen3.8-27B",
       "contextLength": 190000,
+      "enableThinking": false,
       "roles": ["agent", "code"]
     },
     "summarizer": {
       "name": "Summarizer",
-      "baseURL": "http://100.110.242.67:8001/v1",
+      "baseURL": "http://YOUR_HOST:8001/v1",
       "apiKey": "local",
-      "model": "Qwen/Qwen3.6-27B",
+      "model": "Qwen/Qwen3.8-27B",
       "contextLength": 190000,
+      "enableThinking": false,
       "roles": ["summarize"]
     }
   },
@@ -46,6 +50,7 @@
   "memory": {
     "enabled": true,
     "dir": "~/.waytech-agent/memory",
+    "compactAtTokens": 90000,
     "threshold": 0.75,
     "keepRecentMessages": 0,
     "summarizer": "summarizer",

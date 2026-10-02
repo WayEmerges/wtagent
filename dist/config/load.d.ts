@@ -5,6 +5,11 @@ export type ModelEntry = {
     model: string;
     contextLength?: number;
     roles?: string[];
+    /**
+     * Qwen3 / vLLM "thinking" mode. When true, the model may stream into
+     * `reasoning` and leave `content` blank. Default false for reliable replies.
+     */
+    enableThinking?: boolean;
 };
 export type AutoConfig = {
     orchestrator?: string;
@@ -27,6 +32,8 @@ export type LeaseConfig = {
 export type MemoryConfig = {
     enabled: boolean;
     dir: string;
+    /** Estimated prompt tokens at which to auto-compact (preferred over threshold ratio). */
+    compactAtTokens: number;
     threshold: number;
     keepRecentMessages: number;
     summarizer?: string;

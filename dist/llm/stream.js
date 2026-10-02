@@ -39,6 +39,10 @@ export function estimateTokens(text) {
     }
     return Math.max(1, Math.ceil(text.length / 4));
 }
+/** vLLM / Qwen3 chat-template switch for reasoning models. */
+export function thinkingTemplateKwargs(enableThinking) {
+    return { chat_template_kwargs: { enable_thinking: enableThinking } };
+}
 export async function streamChat(args) {
     const client = getClient(args.baseURL, args.apiKey);
     const ac = new AbortController();
@@ -79,14 +83,19 @@ export async function streamChat(args) {
                 body.tool_choice = args.toolChoice;
             }
         }
+        if (args.enableThinking !== undefined) {
+            Object.assign(body, thinkingTemplateKwargs(args.enableThinking));
+        }
         let stream;
         try {
             stream = (await client.chat.completions.create({ ...body, stream_options: { include_usage: true } }, { signal: ac.signal }));
         }
         catch (err) {
             if (err instanceof APIError && err.status === 400) {
+                // Retry without thinking kwargs / stream_options if the server rejects them.
+                const { chat_template_kwargs: _drop, ...plain } = body;
                 try {
-                    stream = (await client.chat.completions.create(body, {
+                    stream = (await client.chat.completions.create(plain, {
                         signal: ac.signal,
                     }));
                 }
@@ -125,6 +134,8 @@ export async function streamChat(args) {
                 text += piece;
                 args.onDelta(piece);
             }
+            // Intentionally ignore delta.reasoning / reasoning_content — that is
+            // internal chain-of-thought, not the user-visible answer.
             const tcs = delta?.tool_calls;
             if (tcs) {
                 for (const tc of tcs) {
